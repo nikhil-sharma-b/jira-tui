@@ -74,6 +74,10 @@ type Config struct {
 	path string
 	mode fs.FileMode
 
+	// bindings is the compiled keymap, built during validation so that a
+	// collision is reported at load rather than at the keypress.
+	bindings *Bindings
+
 	// tokenOnce guards TokenCommand: it runs at most once per loaded config --
 	// and jt loads one per process -- with its output living only in token.
 	tokenOnce sync.Once
@@ -267,10 +271,32 @@ func (c *Config) validate() error {
 			return &Error{Key: "keys." + name, Msg: "unknown action"}
 		}
 	}
+	// Compiling here means a binding that could never fire is a startup
+	// error naming both actions, rather than a key that silently does
+	// nothing until someone notices.
+	if _, err := c.Bindings(); err != nil {
+		return err
+	}
 	if len(c.Columns) == 0 {
 		return &Error{Key: "columns", Msg: "must name at least one column"}
 	}
 	return nil
+}
+
+// Keymap is the effective keymap: user bindings merged over the defaults.
+func (c *Config) Keymap() Keymap { return DefaultKeymap().Merge(c.Keys) }
+
+// Bindings is the compiled effective keymap, which dispatch reads. A config
+// that was built rather than loaded compiles on first use.
+func (c *Config) Bindings() (*Bindings, error) {
+	if c.bindings == nil {
+		b, err := Compile(c.Keymap(), c.Leader)
+		if err != nil {
+			return nil, err
+		}
+		c.bindings = b
+	}
+	return c.bindings, nil
 }
 
 // SiteURL is the site base with any trailing slash removed, so paths can be

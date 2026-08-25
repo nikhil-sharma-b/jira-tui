@@ -32,6 +32,9 @@ review = "status = 'In Review' AND project = PROJ ORDER BY updated DESC"
 request = "15s"
 
 # Merged over the defaults -- you only list what you change.
-# Set a binding to "" to unbind it.
+# Set a binding to "" to unbind it. A binding that collides with a default
+# one -- the same keys, or the start of a longer sequence -- is refused at
+# startup naming both actions, so rebind or unbind the other one too.
+# See ? in the app for the bindings actually in effect.
 [keys]
 # transition = "<leader>t"

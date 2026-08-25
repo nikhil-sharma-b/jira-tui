@@ -80,7 +80,7 @@ mine = "assignee = currentUser()"
 request = "3s"
 
 [keys]
-down = "n"
+down = "e"
 help = ""
 `, 0o600))
 	if err != nil {
@@ -100,7 +100,7 @@ help = ""
 	}
 
 	km := config.DefaultKeymap().Merge(cfg.Keys)
-	if got, want := km[config.ActionDown], "n"; got != want {
+	if got, want := km[config.ActionDown], "e"; got != want {
 		t.Errorf("down = %q, want %q", got, want)
 	}
 	if _, ok := km[config.ActionHelp]; ok {
