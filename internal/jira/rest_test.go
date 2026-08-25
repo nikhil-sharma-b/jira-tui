@@ -12,17 +12,13 @@ import (
 	"github.com/nikhil-sharma-b/jira-tui/internal/jira"
 )
 
+// newClient is the default client for tests that are not about transport
+// tuning. Backoff waits expire at once: no test in this package is about how
+// long a retry really takes -- the ones concerned with timing inspect the delay
+// a retry asks for -- so the suite must never actually wait.
 func newClient(t *testing.T, siteURL string) *jira.REST {
 	t.Helper()
-	c, err := jira.NewREST(jira.Config{
-		SiteURL: siteURL,
-		Email:   "someone@example.com",
-		Token:   "a-token",
-	})
-	if err != nil {
-		t.Fatalf("NewREST: %v", err)
-	}
-	return c
+	return newTunedClient(t, siteURL, jira.Config{After: expireImmediately})
 }
 
 func TestNewRESTRejectsIncompleteConfig(t *testing.T) {

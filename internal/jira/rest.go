@@ -1,6 +1,7 @@
 package jira
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -26,12 +27,17 @@ type Config struct {
 	// each session's load predictable without cross-process coordination.
 	MaxConcurrent int
 
-	// MaxRetries bounds backoff attempts on retryable reads.
+	// MaxRetries bounds the repeats of a retryable read, not its attempts: two
+	// means up to three requests. Zero takes DefaultMaxRetries, so a caller
+	// that fills in only a site and a credential still gets sane behaviour; a
+	// negative value turns retrying off.
 	MaxRetries int
 
-	// Now is injectable so backoff is tested with a fake clock rather than by
-	// sleeping.
-	Now func() time.Time
+	// After is the sleep seam for backoff, defaulting to time.After. Injecting
+	// it lets the suite verify timing by observing the delay a retry asks for,
+	// which a clock that only reports the time cannot do -- a backoff wait has
+	// to be made to return early, not merely to be measured.
+	After func(time.Duration) <-chan time.Time
 
 	HTTPClient *http.Client
 }
@@ -39,6 +45,16 @@ type Config struct {
 const (
 	DefaultMaxConcurrent = 4
 	DefaultMaxRetries    = 3
+
+	// baseBackoff is the first retry delay; each further attempt doubles it,
+	// so the default ceiling of three retries spans 500ms, 1s and 2s. That is
+	// short enough that a transient 502 stays invisible inside one keystroke's
+	// worth of patience, which is the point of retrying at all.
+	baseBackoff = 500 * time.Millisecond
+	// maxBackoff caps the computed delay. A server's own Retry-After is
+	// honoured as stated and is not capped: it is the only party that knows
+	// when the rate-limit window reopens.
+	maxBackoff = 8 * time.Second
 
 	// apiRead is REST v3: rich text arrives as ADF, a JSON tree we render
 	// without a parser.
@@ -79,56 +95,200 @@ func NewREST(cfg Config) (*REST, error) {
 	}
 
 	cfg.SiteURL = strings.TrimRight(cfg.SiteURL, "/")
+	if cfg.MaxConcurrent <= 0 {
+		cfg.MaxConcurrent = DefaultMaxConcurrent
+	}
+	if cfg.MaxRetries < 0 {
+		cfg.MaxRetries = 0
+	} else if cfg.MaxRetries == 0 {
+		cfg.MaxRetries = DefaultMaxRetries
+	}
+	if cfg.After == nil {
+		cfg.After = time.After
+	}
 	client := cfg.HTTPClient
 	if client == nil {
 		client = &http.Client{Timeout: defaultRequestTimeout}
 	}
-	return &REST{cfg: cfg, http: client}, nil
+	return &REST{
+		cfg:  cfg,
+		http: client,
+		sem:  make(chan struct{}, cfg.MaxConcurrent),
+	}, nil
 }
 
-// get performs an authenticated GET and decodes a JSON body into out. It is
-// the only path to the network in this package: keeping the status code, the
-// error body and Retry-After in one place is the whole reason this package
-// speaks HTTP instead of shelling out to a CLI.
-//
-// op names the operation for error messages. apiBase selects the REST version:
-// apiRead for v3, whose rich text is ADF, apiWrite for v2, whose rich text is
-// wiki markup.
+// request is one call to Jira, described completely enough that the retry loop
+// can repeat it. op names the operation for error messages. apiBase selects the
+// REST version: apiRead for v3, whose rich text is ADF, apiWrite for v2, whose
+// rich text is wiki markup.
+type request struct {
+	op      string
+	method  string
+	apiBase string
+	path    string
+	query   url.Values
+	// body is marshalled as JSON when non-nil.
+	body any
+	// out receives the decoded response body when non-nil.
+	out any
+	// retry allows the exponential backoff loop. Reads set it; writes never
+	// do, whatever the status code -- a duplicated comment or a double
+	// transition is a worse outcome than an error message.
+	retry bool
+}
+
+// get performs an authenticated GET and decodes a JSON body into out. Reads
+// are retryable.
 func (c *REST) get(ctx context.Context, op, apiBase, path string, query url.Values, out any) error {
-	endpoint := c.cfg.SiteURL + apiBase + path
-	if len(query) > 0 {
-		endpoint += "?" + query.Encode()
+	return c.do(ctx, request{op: op, method: http.MethodGet, apiBase: apiBase, path: path, query: query, out: out, retry: true})
+}
+
+// post performs an authenticated POST of a JSON body. Writes are not retried.
+func (c *REST) post(ctx context.Context, op, apiBase, path string, body, out any) error {
+	return c.do(ctx, request{op: op, method: http.MethodPost, apiBase: apiBase, path: path, body: body, out: out})
+}
+
+// do is the only path to the network in this package: the concurrency cap, the
+// retry loop, the status code, the error body and Retry-After all meet here.
+// Keeping that in one place is the whole reason this package speaks HTTP
+// instead of shelling out to a CLI, which surfaces failures only as stderr.
+func (c *REST) do(ctx context.Context, r request) error {
+	// Encoded once here rather than inside attempt: a retried request needs a
+	// fresh reader over the same bytes, not a fresh marshal of them.
+	var body []byte
+	if r.body != nil {
+		encoded, err := json.Marshal(r.body)
+		if err != nil {
+			return fmt.Errorf("%s: encoding request: %w", r.op, err)
+		}
+		body = encoded
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+
+	// The slot is held for the whole call, backoff included. Releasing it
+	// while waiting would let queued requests rush a server that has just
+	// asked us to slow down, which is the opposite of what backoff is for.
+	if err := c.acquire(ctx, r.op); err != nil {
+		return err
+	}
+	defer func() { <-c.sem }()
+
+	for attempt := 0; ; attempt++ {
+		err := c.attempt(ctx, r, body)
+		if err == nil {
+			return nil
+		}
+		if !r.retry || attempt >= c.cfg.MaxRetries {
+			return err
+		}
+		delay, ok := backoffFor(err, attempt)
+		if !ok {
+			return err
+		}
+		if err := c.wait(ctx, r.op, delay); err != nil {
+			return err
+		}
+	}
+}
+
+// acquire takes one of the MaxConcurrent slots, waiting when they are all
+// taken. Requests beyond the cap queue rather than fail; only the caller
+// changing its mind ends the wait early.
+func (c *REST) acquire(ctx context.Context, op string) error {
+	select {
+	case c.sem <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("%s: %w", op, ctx.Err())
+	}
+}
+
+// wait sleeps for a backoff delay, abandoning it promptly if the caller
+// cancels. The sleep goes through cfg.After so the suite never really waits.
+func (c *REST) wait(ctx context.Context, op string, d time.Duration) error {
+	select {
+	case <-c.cfg.After(d):
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("%s: %w", op, ctx.Err())
+	}
+}
+
+// backoffFor reports how long to wait before repeating a failed read, and
+// whether repeating it is worth doing at all.
+//
+// An OfflineError is deliberately not retried: the UI's answer to an
+// unreachable site is to keep cached data browsable behind an offline marker,
+// and it should show that at once rather than after several silent waits.
+func backoffFor(err error, attempt int) (time.Duration, bool) {
+	var e *Error
+	if !errors.As(err, &e) || !e.Retryable() {
+		return 0, false
+	}
+	if e.RetryAfter > 0 {
+		// The server knows when its rate-limit window reopens; a computed
+		// guess can only be wrong in one of two unhelpful directions.
+		return e.RetryAfter, true
+	}
+	d := baseBackoff << attempt
+	if d > maxBackoff || d <= 0 {
+		d = maxBackoff
+	}
+	// No jitter: several sessions do share one rate-limit budget, but they
+	// also start at unrelated moments, and Retry-After already staggers the
+	// case that actually collides. Randomness here would buy little and cost
+	// the deterministic backoff this package is tested on.
+	return d, true
+}
+
+// attempt performs one HTTP round trip. body is the already-encoded request
+// body, nil for a request that has none.
+func (c *REST) attempt(ctx context.Context, r request, body []byte) error {
+	endpoint := c.cfg.SiteURL + r.apiBase + r.path
+	if len(r.query) > 0 {
+		endpoint += "?" + r.query.Encode()
+	}
+
+	// A fresh reader per attempt, so a retried request never sends a drained
+	// one. Only reads retry today, but a half-sent body is not a bug worth
+	// leaving armed.
+	var payload io.Reader
+	if body != nil {
+		payload = bytes.NewReader(body)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, r.method, endpoint, payload)
 	if err != nil {
-		return fmt.Errorf("%s: %w", op, err)
+		return fmt.Errorf("%s: %w", r.op, err)
 	}
 	req.SetBasicAuth(c.cfg.Email, c.cfg.Token)
 	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
 		// A cancelled context is the caller changing its mind, not the site
 		// being unreachable; only the latter is an OfflineError.
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return fmt.Errorf("%s: %w", op, ctxErr)
+			return fmt.Errorf("%s: %w", r.op, ctxErr)
 		}
-		return &OfflineError{Err: fmt.Errorf("%s: %w", op, err)}
+		return &OfflineError{Err: fmt.Errorf("%s: %w", r.op, err)}
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	got, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
-		return &OfflineError{Err: fmt.Errorf("%s: reading response: %w", op, err)}
+		return &OfflineError{Err: fmt.Errorf("%s: reading response: %w", r.op, err)}
 	}
 	if resp.StatusCode >= 300 {
-		return newHTTPError(op, resp, body)
+		return newHTTPError(r.op, resp, got)
 	}
-	if out == nil {
+	if r.out == nil {
 		return nil
 	}
-	if err := json.Unmarshal(body, out); err != nil {
-		return fmt.Errorf("%s: decoding response: %w", op, err)
+	if err := json.Unmarshal(got, r.out); err != nil {
+		return fmt.Errorf("%s: decoding response: %w", r.op, err)
 	}
 	return nil
 }
