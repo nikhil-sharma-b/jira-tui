@@ -1,0 +1,35 @@
+# ~/.config/jt/config.toml
+
+[site]
+url   = "https://your-site.atlassian.net"
+email = "you@example.com"
+
+# Token resolution order: $JIRA_API_TOKEN, then token_command, then token.
+# token_command runs once per process and is held in memory only, so this file
+# can live in public dotfiles.
+token_command = "pass show jira/token"
+# token = "..."   # plaintext fallback; requires chmod 0600 on this file
+
+# Runs when no work item is pinned by argument, $JT_ISSUE, or branch name.
+default_query = "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC"
+
+# Expanded by :jql @name
+[queries]
+mine   = "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC"
+review = "status = 'In Review' AND project = PROJ ORDER BY updated DESC"
+
+# Only these fields are requested from the API. Adding a column fetches it.
+columns = ["key", "summary", "status", "assignee", "priority", "updated"]
+
+leader = " "
+# editor = "nvim"      # defaults to $EDITOR
+images = "off"         # "sixel" reserved for a later version
+
+[timeouts]
+request = "15s"
+
+# Merged over the defaults -- you only list what you change.
+# Set a binding to "" to unbind it.
+[keys]
+# transition = "<leader>t"
+# in_progress = "<leader>p"   # direct binds for your most-used transitions
