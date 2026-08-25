@@ -43,6 +43,202 @@ func TestOpeningTheSameIssueTwiceFetchesItTwice(t *testing.T) {
 	if got := client.issueRequests(); len(got) != 2 || got[0] != "ENG-1" || got[1] != "ENG-1" {
 		t.Errorf("detail requests = %v, want two live requests for ENG-1", got)
 	}
+	if got := client.commentRequests(); len(got) != 2 || got[0] != "ENG-1" || got[1] != "ENG-1" {
+		t.Errorf("comment requests = %v, want two live requests for ENG-1", got)
+	}
+}
+
+func TestCommentsRenderAfterDescriptionWithMetadataAndADF(t *testing.T) {
+	issue := detailedIssue()
+	created := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+	client := &fakeClient{
+		issues: []jira.Issue{issue},
+		comments: map[string][]jira.Comment{"ENG-1": {
+			{
+				ID: "1", Author: &jira.User{DisplayName: "Ada Lovelace", Active: false},
+				Created: created, Updated: created.Add(2 * time.Hour),
+				Body: jira.RawDocument(`{"type":"doc","version":1,"content":[{"type":"bulletList","content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"Replace the relay"}]}]}]}]}`),
+			},
+			{
+				ID: "2", Author: nil,
+				Created: created.Add(time.Hour), Updated: created.Add(time.Hour),
+				Body: jira.RawDocument(`{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"Second comment"}]}]}`),
+			},
+		}},
+	}
+	d := newDriver(t, client, testConfig(t, nil))
+	d.send(tea.WindowSizeMsg{Width: 100, Height: 40})
+	d.keys("enter")
+
+	view := d.view()
+	for _, want := range []string{
+		"Comments", "Ada Lovelace", "2026-08-20 10:00 UTC", "• Replace the relay",
+		"Edited: 2026-08-20 12:00 UTC", "Unknown author", "Second comment",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("comments do not show %q:\n%s", want, view)
+		}
+	}
+	if description, comments := strings.Index(view, "Description"), strings.Index(view, "Comments"); description < 0 || comments <= description {
+		t.Errorf("comments are not after description:\n%s", view)
+	}
+	if first, second := strings.Index(view, "Replace the relay"), strings.Index(view, "Second comment"); first < 0 || second <= first {
+		t.Errorf("comments are not oldest first:\n%s", view)
+	}
+}
+
+func TestNoCommentsIsExplicit(t *testing.T) {
+	issue := detailedIssue()
+	d := newDriver(t, &fakeClient{issues: []jira.Issue{issue}}, testConfig(t, nil))
+	d.keys("enter")
+
+	if !strings.Contains(d.view(), "No comments.") {
+		t.Errorf("empty comments have no explanation:\n%s", d.view())
+	}
+}
+
+func TestCommentFailureKeepsTheLoadedIssueReadable(t *testing.T) {
+	issue := detailedIssue()
+	client := &fakeClient{
+		issues:        []jira.Issue{issue},
+		commentErrFor: map[string]error{"ENG-1": errors.New("comments endpoint failed")},
+	}
+	d := newDriver(t, client, testConfig(t, nil))
+	d.keys("enter")
+
+	view := d.view()
+	for _, want := range []string{"Repair the flux capacitor", "## Diagnosis", "Comments could not be loaded.", "comments endpoint failed"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("comment failure view does not show %q:\n%s", want, view)
+		}
+	}
+	lines := d.lines()
+	if !strings.Contains(lines[len(lines)-1], "comments endpoint failed") {
+		t.Errorf("the comment failure is not in the status line:\n%s", view)
+	}
+
+	d.keys("q")
+	client.mu.Lock()
+	delete(client.commentErrFor, "ENG-1")
+	client.mu.Unlock()
+	d.keys("enter")
+	if strings.Contains(d.view(), "comments endpoint failed") {
+		t.Errorf("a successful reopen left the old comment failure in the status line:\n%s", d.view())
+	}
+}
+
+func TestLongCommentsScrollInTheDetailViewport(t *testing.T) {
+	issue := detailedIssue()
+	comments := make([]jira.Comment, 24)
+	for i := range comments {
+		comments[i] = jira.Comment{
+			ID:      string(rune('A' + i)),
+			Author:  &jira.User{DisplayName: "Commenter"},
+			Created: time.Date(2026, 8, 20, 10, i, 0, 0, time.UTC),
+			Updated: time.Date(2026, 8, 20, 10, i, 0, 0, time.UTC),
+			Body:    jira.RawDocument(`{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"Comment body ` + string(rune('A'+i)) + `"}]}]}`),
+		}
+	}
+	d := newDriver(t, &fakeClient{issues: []jira.Issue{issue}, comments: map[string][]jira.Comment{"ENG-1": comments}}, testConfig(t, nil))
+	d.send(tea.WindowSizeMsg{Width: 80, Height: 12})
+	d.keys("enter", "g", "c")
+
+	if strings.Contains(d.view(), "Comment body X") {
+		t.Fatalf("gc started at the end of the comment section:\n%s", d.view())
+	}
+	d.keys("G")
+	if !strings.Contains(d.view(), "Comment body X") {
+		t.Errorf("G did not reach the end of the comments:\n%s", d.view())
+	}
+}
+
+func TestCommentLayoutRewrapsAfterPaneAndTerminalResizes(t *testing.T) {
+	issue := detailedIssue()
+	comment := jira.Comment{
+		Author:  &jira.User{DisplayName: "Ada Lovelace"},
+		Created: time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC),
+		Updated: time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC),
+		Body:    jira.RawDocument(`{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"A comment with enough words to wrap differently in split and zoomed detail layouts."}]}]}`),
+	}
+	d := newDriver(t, &fakeClient{issues: []jira.Issue{issue}, comments: map[string][]jira.Comment{"ENG-1": {comment}}}, testConfig(t, nil))
+	d.keys("enter")
+
+	for _, keys := range [][]string{{"g", "c"}, {"ctrl+w", "o", "g", "c"}, {"ctrl+w", "o", "g", "c"}} {
+		d.keys(keys...)
+		if !strings.Contains(d.view(), "Comments") || !strings.Contains(d.view(), "A comment with enough words") {
+			t.Errorf("a layout change lost the comments section:\n%s", d.view())
+		}
+	}
+	for _, width := range []int{60, 100, 42} {
+		d.send(tea.WindowSizeMsg{Width: width, Height: 20})
+		d.keys("g", "c")
+		for _, line := range d.lines() {
+			if got := ansi.StringWidth(line); got > width {
+				t.Errorf("at width %d a line is %d columns wide: %q", width, got, line)
+			}
+		}
+	}
+}
+
+func TestMovingSelectionCancelsCommentRequestAtJira(t *testing.T) {
+	started := make(chan string, 1)
+	client := &fakeClient{issues: sampleIssues(2), commentBlock: true, commentStart: started}
+	d := newDriver(t, client, testConfig(t, nil))
+	d.send(keyMsg("enter"))
+	d.step()
+
+	commentCmd := d.pending[1]
+	d.pending = append(d.pending[:1], d.pending[2:]...)
+	result := make(chan tea.Msg, 1)
+	go func() { result <- commentCmd() }()
+	if key := <-started; key != "ENG-1" {
+		t.Fatalf("Jira started fetching comments for %s, want ENG-1", key)
+	}
+	d.keys("g", "l", "j")
+
+	select {
+	case msg := <-result:
+		d.deliver(msg)
+	case <-time.After(time.Second):
+		t.Fatal("moving the selection did not cancel comments at the Jira seam")
+	}
+	if strings.Contains(d.view(), "context canceled") {
+		t.Errorf("the cancelled comment response replaced the selection-moved state:\n%s", d.view())
+	}
+}
+
+func TestOldCommentResponseCannotReplaceReopenedDetail(t *testing.T) {
+	started := make(chan string, 1)
+	issue := detailedIssue()
+	client := &fakeClient{issues: []jira.Issue{issue}, commentBlock: true, commentStart: started}
+	d := newDriver(t, client, testConfig(t, nil))
+	d.send(keyMsg("enter"))
+	d.step()
+
+	oldCommentCmd := d.pending[1]
+	d.pending = append(d.pending[:1], d.pending[2:]...)
+	oldResult := make(chan tea.Msg, 1)
+	go func() { oldResult <- oldCommentCmd() }()
+	<-started
+
+	d.keys("q")
+	client.mu.Lock()
+	client.commentBlock = false
+	client.commentStart = nil
+	client.comments = map[string][]jira.Comment{"ENG-1": {{
+		Author: &jira.User{DisplayName: "Fresh commenter"}, Created: time.Now(), Updated: time.Now(),
+		Body: jira.RawDocument(`{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"Fresh comment"}]}]}`),
+	}}}
+	client.mu.Unlock()
+	d.keys("enter", "g", "c")
+	if !strings.Contains(d.view(), "Fresh comment") {
+		t.Fatalf("the reopened pane did not render fresh comments:\n%s", d.view())
+	}
+
+	d.deliver(<-oldResult)
+	if !strings.Contains(d.view(), "Fresh comment") || strings.Contains(d.view(), "context canceled") {
+		t.Errorf("the old comment response replaced fresh comments:\n%s", d.view())
+	}
 }
 
 func TestEmptyDescriptionIsExplicit(t *testing.T) {
@@ -193,14 +389,40 @@ func TestDetailLoadingIndicatorAnimates(t *testing.T) {
 	// Unwrap the batch, then run its timer while leaving the Jira request
 	// queued. This observes animation during the in-flight state.
 	d.step()
-	tick := d.pending[1]
-	d.pending = append(d.pending[:1], d.pending[2:]...)
+	tick := d.pending[2]
+	d.pending = d.pending[:2]
 	d.deliver(tick())
 
 	if after := d.view(); after == before {
 		t.Errorf("the detail spinner did not advance:\n%s", after)
 	}
 	d.flush()
+}
+
+func TestCommentLoadingIndicatorAnimatesWithoutHidingDetail(t *testing.T) {
+	started := make(chan string, 1)
+	client := &fakeClient{issues: []jira.Issue{detailedIssue()}, commentBlock: true, commentStart: started}
+	d := newDriver(t, client, testConfig(t, nil))
+	d.send(keyMsg("enter"))
+	d.step()
+
+	issueCmd, commentCmd, tick := d.pending[0], d.pending[1], d.pending[2]
+	d.pending = nil
+	d.deliver(issueCmd())
+	result := make(chan tea.Msg, 1)
+	go func() { result <- commentCmd() }()
+	<-started
+	before := d.view()
+	if !strings.Contains(before, "Repair the flux capacitor") || !strings.Contains(before, "Loading comments") {
+		t.Fatalf("comment loading hid the loaded issue:\n%s", before)
+	}
+	d.deliver(tick())
+	if after := d.view(); after == before {
+		t.Errorf("the comment loading spinner did not advance:\n%s", after)
+	}
+
+	d.keys("q")
+	d.deliver(<-result)
 }
 
 func TestMovingTheSelectionCancelsARequestAlreadyAtJira(t *testing.T) {

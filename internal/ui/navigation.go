@@ -52,9 +52,10 @@ func (m *Model) openKey(key string, recordVisit bool) tea.Cmd {
 	}
 	m.detailVisible = true
 	m.focus = PaneDetail
-	cmd := m.detail.fetch(m.client, key)
+	m.status = nil
+	cmds := m.detail.fetch(m.client, key)
 	m.resizePanes()
-	return tea.Batch(cmd, m.detail.tick())
+	return tea.Batch(append(cmds, m.detail.tick())...)
 }
 
 func (m *Model) jump(direction, count int) tea.Cmd {
@@ -78,6 +79,14 @@ func (m *Model) goDetail() {
 	m.detailVisible = true
 	m.focus = PaneDetail
 	m.resizePanes()
+}
+
+func (m *Model) goComments() {
+	if !m.detail.open {
+		return
+	}
+	m.goDetail()
+	m.detail.goComments()
 }
 
 func (m *Model) moveFocus(target Pane) {

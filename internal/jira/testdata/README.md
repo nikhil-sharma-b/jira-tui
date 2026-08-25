@@ -38,6 +38,10 @@ work item per page, and will overwrite the constructed files with genuine ones
 when run against a site holding more than one item. Prefer the real capture if
 you have such a site.
 
+`comments.200` is constructed from Atlassian's documented v3 comment response.
+It covers the ADF body, Jira timestamp format, and an inactive author without
+capturing discussion from a real work item.
+
 To capture more, add a case to `tools/capturefixtures` and run it against your
 own site:
 

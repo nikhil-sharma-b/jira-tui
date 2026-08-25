@@ -2,9 +2,11 @@ package jira_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -99,6 +101,93 @@ func TestIssueRequestsTheNamedFieldsFromV3(t *testing.T) {
 	if got := req.URL.Query().Get("fields"); got != "summary,description" {
 		t.Errorf("fields = %q, want summary,description", got)
 	}
+}
+
+func TestCommentsDecodesOnePageFromV3(t *testing.T) {
+	srv := newFixtureServer(t, map[string]string{"/rest/api/3/issue/ENG-1/comment": "comments.200"})
+
+	comments, err := newClient(t, srv.URL).Comments(context.Background(), "ENG-1")
+	if err != nil {
+		t.Fatalf("Comments: %v", err)
+	}
+	if len(comments) != 1 {
+		t.Fatalf("Comments returned %d comments, want 1", len(comments))
+	}
+	got := comments[0]
+	if got.ID != "10000" || got.Author == nil || got.Author.DisplayName != "Mia Krystof" || got.Author.Active {
+		t.Errorf("comment identity = %#v, want inactive Mia Krystof comment 10000", got)
+	}
+	if want := time.Date(2026, 8, 20, 9, 30, 0, 0, time.UTC); !got.Created.Equal(want) {
+		t.Errorf("Created = %v, want %v", got.Created, want)
+	}
+	if want := time.Date(2026, 8, 21, 10, 45, 0, 0, time.UTC); !got.Updated.Equal(want) {
+		t.Errorf("Updated = %v, want %v", got.Updated, want)
+	}
+	if !strings.Contains(string(got.Body), "The relay has been replaced.") {
+		t.Errorf("Body = %s, want the ADF document", got.Body)
+	}
+	if got := srv.Requests[0].URL.Query().Get("orderBy"); got != "created" {
+		t.Errorf("orderBy = %q, want created", got)
+	}
+}
+
+func TestCommentsFetchesEveryPageAndReturnsOldestFirst(t *testing.T) {
+	created := []string{
+		"2026-08-23T09:30:00.000+0000",
+		"2026-08-20T09:30:00.000+0000",
+		"2026-08-21T09:30:00.000+0000",
+	}
+	var starts []int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start, _ := strconv.Atoi(r.URL.Query().Get("startAt"))
+		starts = append(starts, start)
+		if start >= len(created) {
+			t.Fatalf("client requested startAt=%d past the result set", start)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"startAt":    start,
+			"maxResults": 1,
+			"total":      len(created),
+			"comments": []map[string]any{{
+				"id":      strconv.Itoa(start + 1),
+				"author":  nil,
+				"created": created[start],
+				"updated": created[start],
+				"body":    map[string]any{"type": "doc", "version": 1},
+			}},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	comments, err := newClient(t, srv.URL).Comments(context.Background(), "ENG-1")
+	if err != nil {
+		t.Fatalf("Comments: %v", err)
+	}
+	if len(comments) != 3 {
+		t.Fatalf("Comments returned %d comments, want 3", len(comments))
+	}
+	if got, want := starts, []int{0, 1, 2}; !equalInts(got, want) {
+		t.Errorf("startAt requests = %v, want %v", got, want)
+	}
+	if got := []string{comments[0].ID, comments[1].ID, comments[2].ID}; strings.Join(got, ",") != "2,3,1" {
+		t.Errorf("comment order = %v, want [2 3 1]", got)
+	}
+	if comments[0].Author != nil {
+		t.Errorf("missing author decoded as %#v, want nil", comments[0].Author)
+	}
+}
+
+func equalInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestErrorsCarryStatusAndJiraMessages(t *testing.T) {

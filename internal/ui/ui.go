@@ -282,6 +282,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.detail.handle(msg)
 		return m, nil
 
+	case commentsMsg:
+		if m.detail.handleComments(msg) && msg.err != nil {
+			m.status = msg.err
+		}
+		return m, nil
+
 	case detailTickMsg:
 		return m, m.detail.handleTick(msg)
 	}
@@ -390,6 +396,9 @@ func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
 		return nil
 	case config.ActionGoDetail:
 		m.goDetail()
+		return nil
+	case config.ActionGoComments:
+		m.goComments()
 		return nil
 	case config.ActionJumpBack:
 		return m.jump(-1, count)

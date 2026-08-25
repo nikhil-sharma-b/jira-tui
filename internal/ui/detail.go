@@ -27,36 +27,55 @@ type detailMsg struct {
 	err     error
 }
 
+type commentsMsg struct {
+	request  uint64
+	comments []jira.Comment
+	err      error
+}
+
 type detailTickMsg struct{ request uint64 }
 
 // detailPane owns everything specific to one live work-item fetch and its
 // viewport. The root model only opens, cancels, moves, resizes, and renders it.
 type detailPane struct {
-	open    bool
-	loading bool
-	issue   *jira.Issue
-	err     error
+	open            bool
+	loading         bool
+	issue           *jira.Issue
+	err             error
+	commentsLoading bool
+	comments        []jira.Comment
+	commentsErr     error
 
-	request uint64
-	cancel  context.CancelFunc
-	top     int
-	width   int
-	rows    int
-	lines   []string
-	frame   int
+	request        uint64
+	cancel         context.CancelFunc
+	top            int
+	width          int
+	rows           int
+	lines          []string
+	frame          int
+	commentsOffset int
+	jumpToComments bool
 }
 
-func (d *detailPane) fetch(client jira.Client, key string) tea.Cmd {
+func (d *detailPane) fetch(client jira.Client, key string) []tea.Cmd {
 	d.cancelFetch()
 	d.open, d.loading, d.err, d.issue, d.top, d.frame = true, true, nil, nil, 0, 0
+	d.commentsLoading, d.comments, d.commentsErr = true, nil, nil
+	d.commentsOffset, d.jumpToComments = 0, false
 	d.request++
 	request := d.request
 	ctx, cancel := context.WithCancel(context.Background())
 	d.cancel = cancel
 	fields := append([]string(nil), detailFields...)
-	return func() tea.Msg {
-		issue, err := client.Issue(ctx, key, fields)
-		return detailMsg{request: request, issue: issue, err: err}
+	return []tea.Cmd{
+		func() tea.Msg {
+			issue, err := client.Issue(ctx, key, fields)
+			return detailMsg{request: request, issue: issue, err: err}
+		},
+		func() tea.Msg {
+			comments, err := client.Comments(ctx, key)
+			return commentsMsg{request: request, comments: comments, err: err}
+		},
 	}
 }
 
@@ -68,10 +87,13 @@ func (d *detailPane) tick() tea.Cmd {
 }
 
 func (d *detailPane) handleTick(msg detailTickMsg) tea.Cmd {
-	if !d.loading || msg.request != d.request {
+	if (!d.loading && !d.commentsLoading) || msg.request != d.request {
 		return nil
 	}
 	d.frame = (d.frame + 1) % len(spinnerFrames)
+	if d.issue != nil && d.commentsLoading {
+		d.render()
+	}
 	return d.tick()
 }
 
@@ -83,31 +105,52 @@ func (d *detailPane) cancelFetch() {
 }
 
 func (d *detailPane) selectionMoved() {
-	if !d.loading {
+	if !d.loading && !d.commentsLoading {
 		return
 	}
 	d.cancelFetch()
 	d.request++
-	d.loading = false
+	d.loading, d.commentsLoading = false, false
 	d.err = errors.New("detail fetch cancelled because the selection moved")
+	d.comments, d.commentsErr = nil, nil
 	d.lines = nil
 }
 
 func (d *detailPane) handle(msg detailMsg) bool {
-	if msg.request != d.request {
+	if msg.request != d.request || !d.loading {
 		return false
 	}
-	d.cancelFetch()
 	d.loading = false
 	if msg.err != nil {
+		d.cancelFetch()
+		d.commentsLoading = false
 		d.issue = nil
 		d.err = detailError(msg.err)
 		d.lines = nil
 		return true
 	}
 	d.issue, d.err = msg.issue, nil
+	d.finishFetch()
 	d.render()
 	return true
+}
+
+func (d *detailPane) handleComments(msg commentsMsg) bool {
+	if msg.request != d.request || !d.commentsLoading {
+		return false
+	}
+	d.commentsLoading = false
+	d.commentsErr = msg.err
+	d.comments = append(d.comments[:0], msg.comments...)
+	d.finishFetch()
+	d.render()
+	return true
+}
+
+func (d *detailPane) finishFetch() {
+	if !d.loading && !d.commentsLoading {
+		d.cancelFetch()
+	}
 }
 
 func detailError(err error) error {
@@ -159,14 +202,68 @@ func (d *detailPane) render() {
 	} else {
 		lines = append(lines, rendered...)
 	}
+	lines = append(lines, "", "Comments")
+	d.commentsOffset = len(lines) - 1
+	switch {
+	case d.commentsLoading:
+		lines = append(lines, spinnerFrames[d.frame]+" Loading comments…")
+	case d.commentsErr != nil:
+		lines = append(lines, "Comments could not be loaded.")
+	case len(d.comments) == 0:
+		lines = append(lines, "No comments.")
+	default:
+		for index, comment := range d.comments {
+			if index > 0 {
+				lines = append(lines, "")
+			}
+			lines = append(lines, renderComment(comment, d.width)...)
+		}
+	}
 	for n := range lines {
 		lines[n] = fitWidth(lines[n], d.width)
 	}
 	d.lines = lines
+	if d.jumpToComments {
+		d.top = d.commentsOffset
+		if !d.commentsLoading {
+			d.jumpToComments = false
+		}
+	}
+	d.clamp()
+}
+
+func renderComment(comment jira.Comment, width int) []string {
+	lines := wrapDetailLine(userName(comment.Author, "Unknown author")+" · "+detailTime(comment.Created), width)
+	if comment.Updated.Sub(comment.Created) >= time.Second {
+		lines = append(lines, wrapDetailLine("Edited: "+detailTime(comment.Updated), width)...)
+	}
+	switch {
+	case comment.Body.IsEmpty():
+		lines = append(lines, "No comment body.")
+	default:
+		rendered, err := adf.Render(comment.Body, adf.Options{Width: width})
+		if err != nil {
+			lines = append(lines, "Comment could not be rendered: "+err.Error())
+		} else if len(rendered) == 0 {
+			lines = append(lines, "No comment body.")
+		} else {
+			lines = append(lines, rendered...)
+		}
+	}
+	return lines
+}
+
+func (d *detailPane) goComments() {
+	if d.issue == nil {
+		d.jumpToComments = true
+		return
+	}
+	d.top = d.commentsOffset
 	d.clamp()
 }
 
 func (d *detailPane) move(action config.Action, count int) {
+	d.jumpToComments = false
 	n := max(count, 1)
 	half := max(d.rows/2, 1)
 	switch action {

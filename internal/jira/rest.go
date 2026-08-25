@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -362,7 +363,69 @@ func (c *REST) Issue(ctx context.Context, key string, fields []string) (*Issue, 
 }
 
 func (c *REST) Comments(ctx context.Context, key string) ([]Comment, error) {
-	panic("not implemented")
+	const pageSize = 100
+	path := "/issue/" + url.PathEscape(key) + "/comment"
+	var comments []Comment
+	for start := 0; ; {
+		q := url.Values{
+			"startAt":    {strconv.Itoa(start)},
+			"maxResults": {strconv.Itoa(pageSize)},
+			"orderBy":    {"created"},
+		}
+		var page commentPageWire
+		if err := c.get(ctx, "comments", apiRead, path, q, &page); err != nil {
+			return nil, err
+		}
+		for _, wire := range page.Comments {
+			comment, err := wire.comment()
+			if err != nil {
+				return nil, fmt.Errorf("comments: %w", err)
+			}
+			comments = append(comments, comment)
+		}
+
+		next := page.StartAt + len(page.Comments)
+		if next >= page.Total {
+			break
+		}
+		if len(page.Comments) == 0 || next <= start {
+			return nil, errors.New("comments: Jira returned an incomplete page")
+		}
+		start = next
+	}
+
+	sort.SliceStable(comments, func(i, j int) bool {
+		return comments[i].Created.Before(comments[j].Created)
+	})
+	return comments, nil
+}
+
+type commentPageWire struct {
+	StartAt  int           `json:"startAt"`
+	Total    int           `json:"total"`
+	Comments []commentWire `json:"comments"`
+}
+
+type commentWire struct {
+	ID      string          `json:"id"`
+	Author  *User           `json:"author"`
+	Created json.RawMessage `json:"created"`
+	Updated json.RawMessage `json:"updated"`
+	Body    json.RawMessage `json:"body"`
+}
+
+func (w commentWire) comment() (Comment, error) {
+	comment := Comment{ID: w.ID, Author: w.Author}
+	if err := unmarshalTime(w.Created, &comment.Created); err != nil {
+		return Comment{}, fmt.Errorf("comment %s created: %w", w.ID, err)
+	}
+	if err := unmarshalTime(w.Updated, &comment.Updated); err != nil {
+		return Comment{}, fmt.Errorf("comment %s updated: %w", w.ID, err)
+	}
+	if !isJSONNull(w.Body) {
+		comment.Body = append(comment.Body[:0], w.Body...)
+	}
+	return comment, nil
 }
 
 func (c *REST) Transitions(ctx context.Context, key string) ([]Transition, error) {

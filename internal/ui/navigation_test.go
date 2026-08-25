@@ -25,6 +25,9 @@ func TestPinnedSessionStartsOnLiveFullWidthDetail(t *testing.T) {
 	if got := client.issueRequests(); len(got) != 1 || got[0] != "ENG-1" {
 		t.Errorf("live detail requests = %v, want [ENG-1]", got)
 	}
+	if got := client.commentRequests(); len(got) != 1 || got[0] != "ENG-1" {
+		t.Errorf("live comment requests = %v, want [ENG-1]", got)
+	}
 	if len(client.requests()) == 0 {
 		t.Error("the hidden list did not continue its startup")
 	}
@@ -59,6 +62,51 @@ func TestSemanticPaneJumpsTargetTheNamedPane(t *testing.T) {
 	}
 	if got := d.selected(); got != "ENG-2" {
 		t.Errorf("detail motion moved list selection to %s", got)
+	}
+}
+
+func TestGcAddressesCommentsFromListSplitZoomAndPin(t *testing.T) {
+	issue := detailedIssue()
+	issue.Description = longDescription()
+	comment := jira.Comment{
+		Author: &jira.User{DisplayName: "Mia Krystof"}, Created: issue.Created, Updated: issue.Created,
+		Body: longCommentBody(),
+	}
+
+	t.Run("split from list focus", func(t *testing.T) {
+		d := newDriver(t, &fakeClient{issues: []jira.Issue{issue}, comments: map[string][]jira.Comment{"ENG-1": {comment}}}, testConfig(t, nil))
+		d.send(keyMsg("enter"))
+		d.flush()
+		d.keys("g", "l", "g", "c")
+		if !strings.Contains(d.view(), "Comments") || !strings.Contains(d.view(), "Directly addressed comment") {
+			t.Errorf("gc did not address comments from list focus:\n%s", d.view())
+		}
+	})
+
+	t.Run("zoomed detail", func(t *testing.T) {
+		d := newDriver(t, &fakeClient{issues: []jira.Issue{issue}, comments: map[string][]jira.Comment{"ENG-1": {comment}}}, testConfig(t, nil))
+		d.keys("enter", "ctrl+w", "o", "g", "c")
+		if first := strings.Split(d.view(), "\n")[0]; first != "Comments" {
+			t.Errorf("gc did not put comments at the top of zoomed detail, first line %q:\n%s", first, d.view())
+		}
+	})
+
+	t.Run("pinned detail", func(t *testing.T) {
+		client := &fakeClient{issues: []jira.Issue{issue}, comments: map[string][]jira.Comment{"ENG-1": {comment}}}
+		d := newPausedDriver(t, ui.Options{Client: client, Config: testConfig(t, nil), Pin: "ENG-1"})
+		d.flush()
+		d.keys("g", "c")
+		if first := strings.Split(d.view(), "\n")[0]; first != "Comments" {
+			t.Errorf("gc did not put comments at the top of pinned detail, first line %q:\n%s", first, d.view())
+		}
+	})
+}
+
+func TestGcWithoutAnOpenDetailIsANoop(t *testing.T) {
+	d := listWith(t, 2)
+	d.keys("g", "c", "j")
+	if got := d.selected(); got != "ENG-2" {
+		t.Errorf("gc without detail changed normal list motion; selection = %s", got)
 	}
 }
 
@@ -148,6 +196,9 @@ func TestJumplistMovesLiveAndTruncatesForwardHistory(t *testing.T) {
 	if !strings.Contains(d.view(), "Key: ENG-3") {
 		t.Errorf("new visit after back did not stay on ENG-3:\n%s", d.view())
 	}
+	if got := client.commentRequests(); len(got) != len(client.issueRequests()) {
+		t.Errorf("jumplist fetched %d issue details but %d comment sets: issues %v, comments %v", len(client.issueRequests()), len(got), client.issueRequests(), got)
+	}
 }
 
 func TestJumplistEndsAreNoOps(t *testing.T) {
@@ -214,6 +265,14 @@ func longDescription() jira.RawDocument {
 	var paragraphs []string
 	for r := 'A'; r <= 'Z'; r++ {
 		paragraphs = append(paragraphs, `{"type":"paragraph","content":[{"type":"text","text":"Detail line `+string(r)+`"}]}`)
+	}
+	return jira.RawDocument(`{"type":"doc","version":1,"content":[` + strings.Join(paragraphs, ",") + `]}`)
+}
+
+func longCommentBody() jira.RawDocument {
+	paragraphs := []string{`{"type":"paragraph","content":[{"type":"text","text":"Directly addressed comment"}]}`}
+	for i := 0; i < 30; i++ {
+		paragraphs = append(paragraphs, `{"type":"paragraph","content":[{"type":"text","text":"Comment tail"}]}`)
 	}
 	return jira.RawDocument(`{"type":"doc","version":1,"content":[` + strings.Join(paragraphs, ",") + `]}`)
 }
