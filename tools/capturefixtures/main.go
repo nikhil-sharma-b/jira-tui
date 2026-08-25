@@ -6,6 +6,7 @@
 // writes one .http file per case:
 //
 //	go run ./tools/capturefixtures internal/jira/testdata
+//	go run ./tools/capturefixtures /path/to/private/output ISSUE-123
 //
 // Output is unscrubbed and contains real account details. Scrub it before
 // committing -- see internal/jira/testdata/README.md.
@@ -15,6 +16,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"os"
 	"time"
 
@@ -22,8 +24,8 @@ import (
 )
 
 func main() {
-	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: capturefixtures DIR")
+	if len(os.Args) < 2 || len(os.Args) > 3 {
+		fmt.Fprintln(os.Stderr, "usage: capturefixtures DIR [ISSUE-KEY]")
 		os.Exit(2)
 	}
 	path, err := config.DefaultPath()
@@ -33,15 +35,21 @@ func main() {
 	token, err := cfg.ResolveToken()
 	check(err)
 
-	for _, c := range []struct {
+	cases := []struct {
 		name, path, email, token string
 	}{
 		{"myself.200", "/rest/api/3/myself", cfg.Site.Email, token},
 		{"unauthorized.401", "/rest/api/3/myself", cfg.Site.Email, "not-a-real-token"},
 		{"notfound.404", "/rest/api/3/issue/ZZZZ-99999", cfg.Site.Email, token},
-		// Add cases here as later tickets need them; ticket 04 captures real
-		// ADF documents this way.
-	} {
+	}
+	if len(os.Args) == 3 {
+		path := "/rest/api/3/issue/" + url.PathEscape(os.Args[2]) + "?fields=description,comment,attachment"
+		cases = append(cases, struct {
+			name, path, email, token string
+		}{"adf-issue.200", path, cfg.Site.Email, token})
+	}
+
+	for _, c := range cases {
 		req, err := http.NewRequest("GET", cfg.SiteURL()+c.path, nil)
 		check(err)
 		req.SetBasicAuth(c.email, c.token)
