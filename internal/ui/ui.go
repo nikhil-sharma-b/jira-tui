@@ -84,6 +84,12 @@ type Model struct {
 	detail detailPane
 	focus  Pane
 
+	listVisible   bool
+	detailVisible bool
+	zoomed        bool
+	pin           string
+	jumps         jumplist
+
 	// prompt is the commandline or the search line while one is open, nil in
 	// normal mode. It is paired with the dispatcher's modal state, which is
 	// what routes keys to it; openPrompt and closePrompt are the only two
@@ -150,16 +156,25 @@ func New(opts Options) (*Model, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Model{
-		client:   opts.Client,
-		cfg:      cfg,
-		store:    store{cache: opts.Cache, site: cfg.SiteURL()},
-		dispatch: NewDispatcher(bindings),
-		help:     NewHelp(bindings),
-		query:    cfg.DefaultQuery,
-		loading:  true,
-		now:      time.Now,
-	}, nil
+	m := &Model{
+		client:      opts.Client,
+		cfg:         cfg,
+		store:       store{cache: opts.Cache, site: cfg.SiteURL()},
+		dispatch:    NewDispatcher(bindings),
+		help:        NewHelp(bindings),
+		query:       cfg.DefaultQuery,
+		loading:     true,
+		listVisible: true,
+		pin:         opts.Pin,
+		jumps:       newJumplist(),
+		now:         time.Now,
+	}
+	if opts.Pin != "" {
+		m.listVisible = false
+		m.detailVisible = true
+		m.focus = PaneDetail
+	}
+	return m, nil
 }
 
 // SetNow replaces the clock. Relative timestamps are the only thing in the UI
@@ -174,7 +189,12 @@ func (m *Model) Err() error { return m.err }
 // display name and the API wants ids, so nothing can be searched for until
 // this lands -- which is why the ~24h tier is what makes startup instant: the
 // alternative is a round trip before the first row can even be requested.
-func (m *Model) Init() tea.Cmd { return m.loadFields() }
+func (m *Model) Init() tea.Cmd {
+	if m.pin == "" {
+		return m.loadFields()
+	}
+	return tea.Batch(m.loadFields(), m.openKey(m.pin, true))
+}
 
 // fieldsMsg carries the site's field metadata, or the failure to get it.
 type fieldsMsg struct {
@@ -237,7 +257,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.list.rows = m.rows()
 		m.list.clamp()
-		m.resizeDetail()
+		m.resizePanes()
 		return m, nil
 
 	case tea.KeyMsg:
@@ -259,9 +279,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handlePage(msg)
 
 	case detailMsg:
-		if m.detail.handle(msg) {
-			m.focus = PaneDetail
-		}
+		m.detail.handle(msg)
 		return m, nil
 
 	case detailTickMsg:
@@ -278,7 +296,13 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 	if msg.Type == tea.KeyCtrlC {
 		return tea.Quit
 	}
-	switch result := m.dispatch.Dispatch(msg.String()); result.Kind {
+	key := msg.String()
+	// Terminals encode Ctrl-i as Tab. In normal mode the configured vim
+	// binding wins; in text modes the same byte remains a completion key.
+	if msg.Type == tea.KeyCtrlI && !m.dispatch.InText() {
+		key = "ctrl+i"
+	}
+	switch result := m.dispatch.Dispatch(key); result.Kind {
 	case ResultText:
 		return m.handleText(result.Key)
 	case ResultAction:
@@ -352,12 +376,35 @@ func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
 		return m.closePane()
 	case config.ActionOpen:
 		return m.openDetail()
+	case config.ActionPaneLeft:
+		m.moveFocus(PaneList)
+		return nil
+	case config.ActionPaneRight:
+		m.moveFocus(PaneDetail)
+		return nil
+	case config.ActionPaneZoom:
+		m.toggleZoom()
+		return nil
+	case config.ActionGoList:
+		m.goList()
+		return nil
+	case config.ActionGoDetail:
+		m.goDetail()
+		return nil
+	case config.ActionJumpBack:
+		return m.jump(-1, count)
+	case config.ActionJumpFwd:
+		return m.jump(1, count)
 	case config.ActionReload:
 		return m.reload()
 	}
 
-	if m.focus == PaneDetail && m.detail.open && !m.detail.loading {
+	listVisible, detailVisible := m.visiblePanes()
+	if m.focus == PaneDetail && detailVisible && m.detail.open && !m.detail.loading {
 		m.detail.move(action, count)
+		return nil
+	}
+	if !listVisible {
 		return nil
 	}
 	before := m.list.cursor
@@ -373,10 +420,8 @@ func (m *Model) openDetail() tea.Cmd {
 	if len(m.list.issues) == 0 || m.list.cursor >= len(m.list.issues) {
 		return nil
 	}
-	m.focus = PaneDetail
-	cmd := m.detail.fetch(m.client, m.list.issues[m.list.cursor].Key)
-	m.resizeDetail()
-	return tea.Batch(cmd, m.detail.tick())
+	m.listVisible = true
+	return m.openKey(m.list.issues[m.list.cursor].Key, true)
 }
 
 // reload discards the loaded rows and runs the query again from the top,
@@ -397,9 +442,21 @@ func (m *Model) reload() tea.Cmd {
 // closePane closes detail when it exists and quits when the list is the last
 // pane. Both q and :q come through this one decision.
 func (m *Model) closePane() tea.Cmd {
-	if m.detail.open {
+	if m.focus == PaneDetail && m.detail.open {
 		m.detail.close()
+		m.detailVisible = false
+		m.listVisible = true
+		m.zoomed = false
 		m.focus = PaneList
+		m.resizePanes()
+		return nil
+	}
+	if m.focus == PaneList && m.detail.open {
+		m.listVisible = false
+		m.detailVisible = true
+		m.zoomed = false
+		m.focus = PaneDetail
+		m.resizePanes()
 		return nil
 	}
 	return tea.Quit
@@ -582,13 +639,23 @@ func (m *Model) View() string {
 	if m.help.Visible() {
 		return m.help.String()
 	}
-	if m.detail.open {
+	listVisible, detailVisible := m.visiblePanes()
+	if listVisible && detailVisible {
 		return m.twoPaneView()
 	}
 	footer := m.footer()
-	lines := m.listPane(m.width, max(m.height-len(footer), 0))
-	for len(lines) < max(m.height-len(footer), 0) {
+	bodyRows := max(m.height-len(footer), 0)
+	var lines []string
+	if detailVisible {
+		lines = m.detail.view()
+	} else {
+		lines = m.listPane(m.width, bodyRows)
+	}
+	for len(lines) < bodyRows {
 		lines = append(lines, "")
+	}
+	if len(lines) > bodyRows {
+		lines = lines[:bodyRows]
 	}
 	return strings.Join(append(lines, footer...), "\n")
 }
@@ -599,12 +666,20 @@ func (m *Model) paneWidths() (int, int) {
 	return left, available - left
 }
 
-func (m *Model) resizeDetail() {
+func (m *Model) resizePanes() {
 	if !m.detail.open {
 		return
 	}
-	_, right := m.paneWidths()
-	m.detail.resize(right, max(m.height-len(m.footer()), 0))
+	listVisible, detailVisible := m.visiblePanes()
+	width := m.width
+	if listVisible && detailVisible {
+		_, width = m.paneWidths()
+	} else if !detailVisible && m.listVisible && m.detailVisible {
+		// The detail is hidden by a list zoom. Keep its split layout current so
+		// restoring the split never flashes stale wrapping.
+		_, width = m.paneWidths()
+	}
+	m.detail.resize(width, max(m.height-len(m.footer()), 0))
 }
 
 func (m *Model) twoPaneView() string {

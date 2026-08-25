@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -34,6 +35,8 @@ func dialing(client jira.Client) session {
 	return session{
 		dial:   func(*config.Config, string) (jira.Client, error) { return client, nil },
 		launch: func(ui.Options) error { return nil },
+		getenv: func(string) string { return "" },
+		branch: branchErr,
 	}
 }
 
@@ -241,6 +244,92 @@ func TestBareCommandLaunchesTheTUI(t *testing.T) {
 	}
 	if launched.Pin != "" {
 		t.Errorf("bare jt pinned %q; nothing asked it to", launched.Pin)
+	}
+}
+
+func TestCommandResolvesPinIntoTheTUI(t *testing.T) {
+	tests := []struct {
+		name   string
+		args   []string
+		envPin string
+		branch string
+		want   string
+	}{
+		{name: "argument wins", args: []string{"proj-1"}, envPin: "PROJ-2", branch: "feature/PROJ-3-work", want: "PROJ-1"},
+		{name: "environment wins", envPin: "proj-2", branch: "feature/PROJ-3-work", want: "PROJ-2"},
+		{name: "branch is inferred", branch: "feature/proj-3-work", want: "PROJ-3"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var launched *ui.Options
+			s := dialing(fakeClient{})
+			s.getenv = func(key string) string {
+				if key == "JT_ISSUE" {
+					return tt.envPin
+				}
+				return ""
+			}
+			s.branch = func() (string, error) { return tt.branch, nil }
+			s.launch = func(opts ui.Options) error {
+				launched = &opts
+				return nil
+			}
+
+			args := append([]string{"--config", writeConfig(t, validConfig)}, tt.args...)
+			var out bytes.Buffer
+			if err := runWith(args, &out, &out, s); err != nil {
+				t.Fatalf("run: %v", err)
+			}
+			if launched == nil || launched.Pin != tt.want {
+				t.Fatalf("TUI pin = %v, want %q", launched, tt.want)
+			}
+		})
+	}
+}
+
+func TestBareCommandWithoutBranchInferenceRemainsUnpinned(t *testing.T) {
+	for _, branch := range []func() (string, error){
+		func() (string, error) { return "HEAD", nil },
+		func() (string, error) { return "", errors.New("not a repository") },
+	} {
+		var launched ui.Options
+		s := dialing(fakeClient{})
+		s.branch = branch
+		s.launch = func(opts ui.Options) error { launched = opts; return nil }
+
+		var out bytes.Buffer
+		if err := runWith([]string{"--config", writeConfig(t, validConfig)}, &out, &out, s); err != nil {
+			t.Fatalf("bare jt: %v", err)
+		}
+		if launched.Pin != "" {
+			t.Errorf("TUI pinned %q, want no inferred pin", launched.Pin)
+		}
+	}
+}
+
+func TestBareCommandInfersPinFromTheCurrentGitBranch(t *testing.T) {
+	repo := t.TempDir()
+	cmd := exec.Command("git", "init", "--quiet", "--initial-branch", "feature/proj-88-work", repo)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	cmd = exec.Command("git", "-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--quiet", "--allow-empty", "-m", "initial")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v: %s", err, out)
+	}
+	t.Chdir(repo)
+
+	var launched ui.Options
+	s := dialing(fakeClient{})
+	s.branch = currentBranch
+	s.launch = func(opts ui.Options) error { launched = opts; return nil }
+
+	var out bytes.Buffer
+	if err := runWith([]string{"--config", writeConfig(t, validConfig)}, &out, &out, s); err != nil {
+		t.Fatalf("bare jt: %v", err)
+	}
+	if launched.Pin != "PROJ-88" {
+		t.Errorf("TUI pin = %q, want branch key PROJ-88", launched.Pin)
 	}
 }
 

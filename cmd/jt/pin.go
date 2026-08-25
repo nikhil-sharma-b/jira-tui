@@ -1,7 +1,6 @@
 package main
 
 import (
-	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -65,5 +64,3 @@ func currentBranch() (string, error) {
 	}
 	return strings.TrimSpace(string(out)), nil
 }
-
-var _ = os.Getenv

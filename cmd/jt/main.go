@@ -45,15 +45,20 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) error {
-	return runWith(args, stdout, stderr, session{dial: connect, launch: ui.Run, store: openCache})
+	return runWith(args, stdout, stderr, session{
+		dial: connect, launch: ui.Run, store: openCache,
+		getenv: os.Getenv, branch: currentBranch,
+	})
 }
 
 // session is what the command needs from the outside world: how to reach Jira,
-// and how to put a UI on the terminal. Both are parameters so the command is
-// exercised end to end in tests without a network and without a terminal.
+// inspect its launch environment, and put a UI on the terminal. The values are
+// parameters so tests need neither a network, a git worktree, nor a terminal.
 type session struct {
 	dial   connector
 	launch launcher
+	getenv func(string) string
+	branch func() (string, error)
 	// store opens the cache. It is a parameter for the same reason the other
 	// two are: a test must not write to the user's real cache directory, and
 	// must be able to run a session that has no cache at all.
@@ -74,7 +79,8 @@ func runWith(args []string, stdout, stderr io.Writer, s session) error {
 
 	switch {
 	case len(words) == 0:
-		return openTUI(*configPath, stderr, s)
+		pin, _ := resolvePin(nil, s.getenv, s.branch)
+		return openTUI(*configPath, pin, stderr, s)
 	case words[0] == "version":
 		fmt.Fprintln(stdout, "jt", version)
 		return nil
@@ -84,7 +90,11 @@ func runWith(args []string, stdout, stderr io.Writer, s session) error {
 		}
 		return authCheck(context.Background(), stdout, *configPath, s.dial)
 	default:
-		return fmt.Errorf("unknown command %q; run 'jt --help' for usage", words[0])
+		if len(words) != 1 || normalizeKey(words[0]) == "" {
+			return fmt.Errorf("unknown command %q; run 'jt --help' for usage", words[0])
+		}
+		pin, _ := resolvePin(words, s.getenv, s.branch)
+		return openTUI(*configPath, pin, stderr, s)
 	}
 }
 
@@ -146,10 +156,10 @@ func connect(cfg *config.Config, token string) (jira.Client, error) {
 	})
 }
 
-// openTUI is the bare-jt path: load the config, resolve a credential, connect,
-// and hand all three to the UI. Everything that can be reported as plain text
-// is reported here, before the alternate screen exists to hide it.
-func openTUI(configPath string, stderr io.Writer, s session) error {
+// openTUI loads the config, resolves a credential, connects, and hands the
+// session to the UI. Everything that can be reported as plain text is reported
+// here, before the alternate screen exists to hide it.
+func openTUI(configPath, pin string, stderr io.Writer, s session) error {
 	cfg, token, err := loadSession(configPath)
 	if err != nil {
 		return err
@@ -163,7 +173,7 @@ func openTUI(configPath string, stderr io.Writer, s session) error {
 		store = s.store(stderr)
 		defer store.Close()
 	}
-	return s.launch(ui.Options{Client: client, Cache: store, Config: cfg})
+	return s.launch(ui.Options{Client: client, Cache: store, Config: cfg, Pin: pin})
 }
 
 // loadSession resolves the two things every command past this point needs, in
