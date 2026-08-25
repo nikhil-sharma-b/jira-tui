@@ -1,0 +1,28 @@
+HTTP/1.1 200 OK
+Content-Type: application/json;charset=UTF-8
+
+{
+  "self": "https://jira.example.net/rest/api/3/user?accountId=0123456789abcdef01234567",
+  "accountId": "0123456789abcdef01234567",
+  "accountType": "atlassian",
+  "emailAddress": "someone@example.com",
+  "avatarUrls": {
+    "48x48": "https://jira.example.net/avatar/0123456789abcdef01234567",
+    "24x24": "https://jira.example.net/avatar/0123456789abcdef01234567",
+    "16x16": "https://jira.example.net/avatar/0123456789abcdef01234567",
+    "32x32": "https://jira.example.net/avatar/0123456789abcdef01234567"
+  },
+  "displayName": "Example User",
+  "active": true,
+  "timeZone": "Etc/UTC",
+  "locale": "en_US",
+  "groups": {
+    "size": 2,
+    "items": []
+  },
+  "applicationRoles": {
+    "size": 1,
+    "items": []
+  },
+  "expand": "groups,applicationRoles"
+}

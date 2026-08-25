@@ -106,6 +106,27 @@ func DefaultKeymap() Keymap {
 }
 
 // Merge overlays user bindings onto m. An empty binding unbinds its action.
+// The receiver is not modified, so DefaultKeymap stays the thing it says it is.
 func (m Keymap) Merge(user map[string]string) Keymap {
-	panic("not implemented")
+	out := make(Keymap, len(m))
+	for a, b := range m {
+		out[a] = b
+	}
+	for name, binding := range user {
+		a := Action(name)
+		if binding == "" {
+			delete(out, a)
+			continue
+		}
+		out[a] = binding
+	}
+	return out
+}
+
+// IsAction reports whether name is a binding target jt knows about. Config
+// naming an unknown action is a typo the user wants told about, not a binding
+// that silently never fires.
+func IsAction(name string) bool {
+	_, ok := DefaultKeymap()[Action(name)]
+	return ok
 }

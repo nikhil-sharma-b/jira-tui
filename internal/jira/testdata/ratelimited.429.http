@@ -1,0 +1,10 @@
+HTTP/1.1 429 Too Many Requests
+Content-Type: application/json;charset=UTF-8
+Retry-After: 7
+
+{
+  "errorMessages": [
+    "Rate limit exceeded."
+  ],
+  "errors": {}
+}

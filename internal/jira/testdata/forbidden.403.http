@@ -1,0 +1,9 @@
+HTTP/1.1 403 Forbidden
+Content-Type: application/json;charset=UTF-8
+
+{
+  "errorMessages": [
+    "You do not have permission to view this issue."
+  ],
+  "errors": {}
+}

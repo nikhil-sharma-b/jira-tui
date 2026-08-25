@@ -30,6 +30,14 @@ make install    # -> ~/.local/bin/jt
 Copy `config.example.toml` to `~/.config/jt/config.toml` and fill in your site.
 Create an API token at <https://id.atlassian.com/manage-profile/security/api-tokens>.
 
+The token is resolved in this order: the `JIRA_API_TOKEN` environment variable,
+then `site.token_command` (run once per process, held in memory only), then a
+plaintext `site.token`. A plaintext token requires `chmod 600` on the config file.
+
+```sh
+jt auth check    # config, credential and connectivity, reported separately
+```
+
 ## Use
 
 ```sh
