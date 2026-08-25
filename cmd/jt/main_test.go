@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/nikhil-sharma-b/jira-tui/internal/cache"
 	"github.com/nikhil-sharma-b/jira-tui/internal/config"
 	"github.com/nikhil-sharma-b/jira-tui/internal/jira"
 	"github.com/nikhil-sharma-b/jira-tui/internal/ui"
@@ -271,5 +274,57 @@ func TestBareCommandReportsWhatTheTUIFailedOn(t *testing.T) {
 	err := runWith([]string{"--config", writeConfig(t, validConfig)}, &out, &out, s)
 	if err == nil || !strings.Contains(err.Error(), "Storey Points") {
 		t.Errorf("bare jt returned %v, want the failure the TUI ended on", err)
+	}
+}
+
+// The cache is opened before the UI is built, so a session that reopens a
+// familiar query answers it from disk rather than from Jira.
+func TestBareCommandOpensTheCacheForTheTUI(t *testing.T) {
+	dir := t.TempDir()
+	var launched *ui.Options
+	s := dialing(fakeClient{})
+	s.store = func(io.Writer) *cache.Cache {
+		c, err := cache.Open(filepath.Join(dir, "cache.db"))
+		if err != nil {
+			t.Fatalf("opening the cache: %v", err)
+		}
+		return c
+	}
+	s.launch = func(opts ui.Options) error {
+		launched = &opts
+		return nil
+	}
+
+	var out bytes.Buffer
+	if err := runWith([]string{"--config", writeConfig(t, validConfig)}, &out, &out, s); err != nil {
+		t.Fatalf("bare jt: %v", err)
+	}
+	if launched == nil || launched.Cache == nil {
+		t.Fatal("the TUI was opened without a cache")
+	}
+}
+
+// A cache that cannot be opened is a slower session, not a failed one.
+func TestBareCommandRunsWithoutACache(t *testing.T) {
+	var launched *ui.Options
+	s := dialing(fakeClient{})
+	s.store = func(stderr io.Writer) *cache.Cache {
+		fmt.Fprintln(stderr, "jt: running without a cache: nope")
+		return nil
+	}
+	s.launch = func(opts ui.Options) error {
+		launched = &opts
+		return nil
+	}
+
+	var out bytes.Buffer
+	if err := runWith([]string{"--config", writeConfig(t, validConfig)}, &out, &out, s); err != nil {
+		t.Fatalf("bare jt without a cache: %v", err)
+	}
+	if launched == nil {
+		t.Fatal("an uncacheable session did not open the TUI at all")
+	}
+	if !strings.Contains(out.String(), "without a cache") {
+		t.Errorf("nothing said the session was running uncached:\n%s", out.String())
 	}
 }

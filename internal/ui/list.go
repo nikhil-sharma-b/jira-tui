@@ -52,6 +52,41 @@ func (l *list) visible() []*jira.Issue {
 	return l.issues[l.top:end]
 }
 
+// anchor is where the user was: the work item they were on and how far down
+// the screen it sat. The key is the only durable name for a row -- an index
+// means something different the moment the result set changes underneath --
+// and the offset is what keeps a refresh from jumping the viewport.
+type anchor struct {
+	key    string
+	offset int
+}
+
+// anchor records the current position, key empty when there is no selection.
+func (l *list) anchor() anchor {
+	a := anchor{offset: l.cursor - l.top}
+	if l.cursor >= 0 && l.cursor < len(l.issues) {
+		a.key = l.issues[l.cursor].Key
+	}
+	return a
+}
+
+// restore puts the selection back where it was after the result set was
+// replaced. A key that is gone from the new result set leaves the selection at
+// its old index, clamped, which is the nearest thing to "where the user was"
+// that remains true.
+func (l *list) restore(a anchor) {
+	if a.key != "" {
+		for i, issue := range l.issues {
+			if issue.Key == a.key {
+				l.cursor = i
+				break
+			}
+		}
+	}
+	l.top = l.cursor - max(a.offset, 0)
+	l.clamp()
+}
+
 // move applies a motion. count is the numeric prefix, zero when none was
 // typed.
 func (l *list) move(action config.Action, count int) {

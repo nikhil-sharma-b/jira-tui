@@ -28,9 +28,16 @@ type fakeClient struct {
 	// Searches records every request the UI made, which is how field
 	// selection and duplicate paging are asserted on.
 	Searches []jira.SearchOptions
+	// fieldCalls counts metadata fetches, which is how a cache hit on the
+	// ~24h tier is observed: the call simply does not happen.
+	fieldCalls int
 }
 
 func (c *fakeClient) Fields(ctx context.Context) ([]jira.Field, error) {
+	c.mu.Lock()
+	c.fieldCalls++
+	c.mu.Unlock()
+
 	if c.fieldsErr != nil {
 		return nil, c.fieldsErr
 	}
@@ -75,6 +82,13 @@ func (c *fakeClient) Search(ctx context.Context, opts jira.SearchOptions) (*jira
 		result.NextPageToken = strconv.Itoa(end)
 	}
 	return result, nil
+}
+
+// fieldRequests reports how many times the field metadata was fetched.
+func (c *fakeClient) fieldRequests() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.fieldCalls
 }
 
 // requests reports what searches have been made.

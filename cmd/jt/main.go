@@ -16,6 +16,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/nikhil-sharma-b/jira-tui/internal/cache"
 	"github.com/nikhil-sharma-b/jira-tui/internal/config"
 	"github.com/nikhil-sharma-b/jira-tui/internal/jira"
 	"github.com/nikhil-sharma-b/jira-tui/internal/ui"
@@ -44,7 +45,7 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) error {
-	return runWith(args, stdout, stderr, session{dial: connect, launch: ui.Run})
+	return runWith(args, stdout, stderr, session{dial: connect, launch: ui.Run, store: openCache})
 }
 
 // session is what the command needs from the outside world: how to reach Jira,
@@ -53,6 +54,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 type session struct {
 	dial   connector
 	launch launcher
+	// store opens the cache. It is a parameter for the same reason the other
+	// two are: a test must not write to the user's real cache directory, and
+	// must be able to run a session that has no cache at all.
+	store cacheOpener
 }
 
 // runWith is run with its outward dependencies passed in.
@@ -69,7 +74,7 @@ func runWith(args []string, stdout, stderr io.Writer, s session) error {
 
 	switch {
 	case len(words) == 0:
-		return openTUI(*configPath, s)
+		return openTUI(*configPath, stderr, s)
 	case words[0] == "version":
 		fmt.Fprintln(stdout, "jt", version)
 		return nil
@@ -101,6 +106,26 @@ func parse(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
+// cacheOpener opens the on-disk cache. A nil cache is a working session --
+// caching is an optimisation over calls that are made anyway -- so this
+// returns one rather than an error when the store cannot be opened.
+type cacheOpener func(stderr io.Writer) *cache.Cache
+
+// openCache is the real opener. A cache that cannot be opened is reported once
+// on stderr, before the alternate screen exists to hide the message, and the
+// session then runs uncached.
+func openCache(stderr io.Writer) *cache.Cache {
+	path, err := cache.DefaultPath()
+	if err == nil {
+		var c *cache.Cache
+		if c, err = cache.Open(path); err == nil {
+			return c
+		}
+	}
+	fmt.Fprintln(stderr, "jt: running without a cache:", err)
+	return nil
+}
+
 // launcher opens the terminal UI and returns when the user leaves it. It is a
 // parameter for the same reason connector is: a test must be able to run the
 // command without owning a terminal.
@@ -124,7 +149,7 @@ func connect(cfg *config.Config, token string) (jira.Client, error) {
 // openTUI is the bare-jt path: load the config, resolve a credential, connect,
 // and hand all three to the UI. Everything that can be reported as plain text
 // is reported here, before the alternate screen exists to hide it.
-func openTUI(configPath string, s session) error {
+func openTUI(configPath string, stderr io.Writer, s session) error {
 	cfg, token, err := loadSession(configPath)
 	if err != nil {
 		return err
@@ -133,7 +158,12 @@ func openTUI(configPath string, s session) error {
 	if err != nil {
 		return err
 	}
-	return s.launch(ui.Options{Client: client, Config: cfg})
+	var store *cache.Cache
+	if s.store != nil {
+		store = s.store(stderr)
+		defer store.Close()
+	}
+	return s.launch(ui.Options{Client: client, Cache: store, Config: cfg})
 }
 
 // loadSession resolves the two things every command past this point needs, in

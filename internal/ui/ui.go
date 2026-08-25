@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -67,6 +68,7 @@ type Options struct {
 type Model struct {
 	client jira.Client
 	cfg    *config.Config
+	store  store
 
 	dispatch *Dispatcher
 	help     *Help
@@ -86,6 +88,14 @@ type Model struct {
 	// is requested, and the flag is what stops a held-down j from asking for
 	// the same page repeatedly.
 	loading bool
+	// refreshing records that a request is revalidating data already on
+	// screen. It is not loading: rows the user can read stay up and stay
+	// usable, and the indicator says only that something newer is on its way.
+	refreshing bool
+	// offline records that the site could not be reached at all. It is a
+	// state rather than an event -- cached rows stay browsable behind it --
+	// so it is shown until a request succeeds, not until a key is pressed.
+	offline bool
 	// pageFailed records that fetching a further page failed. Without it every
 	// motion near the end would re-fire the same failing request, turning a
 	// held-down j into a retry storm the user never asked for. R clears it.
@@ -126,6 +136,7 @@ func New(opts Options) (*Model, error) {
 	return &Model{
 		client:   opts.Client,
 		cfg:      cfg,
+		store:    store{cache: opts.Cache, site: cfg.SiteURL()},
 		dispatch: NewDispatcher(bindings),
 		help:     NewHelp(bindings),
 		query:    cfg.DefaultQuery,
@@ -142,9 +153,11 @@ func (m *Model) SetNow(now func() time.Time) { m.now = now }
 // Err is the failure that ended the session, nil for a clean quit.
 func (m *Model) Err() error { return m.err }
 
-// Init starts the field metadata fetch. Columns are configured by display name
-// and the API wants ids, so nothing can be searched for until this lands.
-func (m *Model) Init() tea.Cmd { return m.fetchFields() }
+// Init asks the cache for the field metadata. Columns are configured by
+// display name and the API wants ids, so nothing can be searched for until
+// this lands -- which is why the ~24h tier is what makes startup instant: the
+// alternative is a round trip before the first row can even be requested.
+func (m *Model) Init() tea.Cmd { return m.loadFields() }
 
 // fieldsMsg carries the site's field metadata, or the failure to get it.
 type fieldsMsg struct {
@@ -156,7 +169,11 @@ type fieldsMsg struct {
 // response that arrives after the query changed can be recognised as stale,
 // and first distinguishes a fresh result set from a continuation.
 type pageMsg struct {
-	query  string
+	query string
+	// fields is what was asked for. Cached columns can be superseded by the
+	// metadata that revalidated them, and a page fetched against the old field
+	// set is then answering a question no longer being asked.
+	fields []string
 	first  bool
 	result *jira.SearchResult
 	err    error
@@ -170,21 +187,30 @@ func (m *Model) fetchFields() tea.Cmd {
 	}
 }
 
-// search asks for one page. Only the fields behind displayed columns are
-// requested: that coupling is the point of resolving columns at all, and it
-// means adding a column to config fetches it without a code change.
+// search asks Jira for one page, and caches a first page that came back.
 func (m *Model) search(pageToken string) tea.Cmd {
-	client, query := m.client, m.query
-	opts := jira.SearchOptions{
-		JQL:        query,
-		Fields:     ColumnFields(m.columns),
-		PageToken:  pageToken,
-		MaxResults: pageSize,
-	}
+	client, query, st := m.client, m.query, m.store
+	opts := m.searchOptions(pageToken)
 	first := pageToken == ""
 	return func() tea.Msg {
 		result, err := client.Search(context.Background(), opts)
-		return pageMsg{query: query, first: first, result: result, err: err}
+		if err == nil {
+			st.putPage(opts, result)
+		}
+		return pageMsg{query: query, fields: opts.Fields, first: first, result: result, err: err}
+	}
+}
+
+// searchOptions is what this model asks for. Only the fields behind displayed
+// columns are requested: that coupling is the point of resolving columns at
+// all, and it means adding a column to config fetches it without a code
+// change. It is also half of the cache key, so the two cannot drift.
+func (m *Model) searchOptions(pageToken string) jira.SearchOptions {
+	return jira.SearchOptions{
+		JQL:        m.query,
+		Fields:     ColumnFields(m.columns),
+		PageToken:  pageToken,
+		MaxResults: pageSize,
 	}
 }
 
@@ -198,6 +224,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return m, m.handleKey(msg)
+
+	case cachedFieldsMsg:
+		return m, m.handleCachedFields(msg)
+
+	case cachedPageMsg:
+		return m, m.handleCachedPage(msg)
+
+	case clearedMsg:
+		return m, m.handleCleared(msg)
 
 	case fieldsMsg:
 		return m, m.handleFields(msg)
@@ -246,7 +281,9 @@ func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
 	return m.maybePage()
 }
 
-// reload discards the loaded rows and runs the query again from the top.
+// reload discards the loaded rows and runs the query again from the top,
+// going to Jira rather than to the cache: R is what the user presses when they
+// do not believe what is on screen, and a stored copy of it is no answer.
 func (m *Model) reload() tea.Cmd {
 	if m.columns == nil {
 		// The field metadata never arrived, so there is nothing to reload but
@@ -256,8 +293,32 @@ func (m *Model) reload() tea.Cmd {
 	}
 	m.list = list{rows: m.rows()}
 	m.nextPage, m.isLast, m.status, m.loading = "", false, nil, true
-	m.pageFailed = false
+	m.pageFailed, m.refreshing = false, false
 	return m.search("")
+}
+
+// ClearCache empties the store and runs the current view again, so the next
+// thing on screen came from Jira. It is what :cache clear binds to; the
+// commandline that types those words is a later ticket.
+//
+// The delete runs in a command rather than here: another session may hold the
+// write lock, and waiting for it on the update loop is a UI that has stopped
+// repainting for as long as that takes.
+func (m *Model) ClearCache() tea.Cmd {
+	st := m.store
+	return tea.Batch(func() tea.Msg { return clearedMsg{err: st.clear()} }, m.reload())
+}
+
+// clearedMsg reports what emptying the store came to. The refetch it triggers
+// does not wait for it: a cache that refused to empty is a cache the refetch
+// overwrites anyway.
+type clearedMsg struct{ err error }
+
+func (m *Model) handleCleared(msg clearedMsg) tea.Cmd {
+	if msg.err != nil {
+		m.status = msg.err
+	}
+	return nil
 }
 
 // maybePage requests the next page when the selection has come close to the
@@ -273,11 +334,21 @@ func (m *Model) maybePage() tea.Cmd {
 
 func (m *Model) handleFields(msg fieldsMsg) tea.Cmd {
 	if msg.err != nil {
+		if jira.IsOffline(msg.err) {
+			m.offline = true
+		}
+		if m.columns != nil {
+			// A failed revalidation of metadata we already have is not worth a
+			// status line: the columns on screen are still usable, and the
+			// search that matters reports its own failure.
+			return nil
+		}
 		// Metadata we could not fetch is a transient failure, not a broken
 		// config: say so, leave the UI up, and let R try again.
 		m.loading, m.status = false, msg.err
 		return nil
 	}
+	m.offline = false
 	columns, err := ResolveColumns(m.cfg.Columns, msg.fields)
 	if err != nil {
 		// A column naming no field is a config mistake that every subsequent
@@ -286,38 +357,67 @@ func (m *Model) handleFields(msg fieldsMsg) tea.Cmd {
 		m.err = err
 		return tea.Quit
 	}
+	before := m.columns
 	m.columns = columns
+	m.store.putFields(msg.fields)
+	if before == nil {
+		return m.loadPage()
+	}
+	if slices.Equal(ColumnFields(before), ColumnFields(columns)) {
+		// The cached columns were right, so the search already in flight is
+		// asking for the correct fields and nothing needs re-requesting.
+		return nil
+	}
+	// The site's fields moved under the cached ones, so what was asked for is
+	// not what is wanted.
+	m.list.rows = m.rows()
 	return m.search("")
 }
 
 func (m *Model) handlePage(msg pageMsg) tea.Cmd {
-	if msg.query != m.query {
-		// The query moved on while this was in flight; its rows belong to a
-		// list that is no longer on screen.
+	if msg.query != m.query || !slices.Equal(msg.fields, ColumnFields(m.columns)) {
+		// The query or the columns moved on while this was in flight; its rows
+		// belong to a list that is no longer on screen.
 		return nil
 	}
-	m.loading = false
+	m.loading, m.refreshing = false, false
 	if msg.err != nil {
+		// The rows are left alone. A failed refresh over data the user is
+		// reading is a note in the status line, not an empty pane.
 		m.status = msg.err
+		m.offline = jira.IsOffline(msg.err)
 		m.pageFailed = !msg.first
 		return nil
 	}
-	m.status = nil
-	m.nextPage = msg.result.NextPageToken
-	// Taken as given: the client already reconciles the flag with whether
-	// there is a token to follow, and re-deriving it here would only invite
-	// the two answers to drift apart.
-	m.isLast = msg.result.IsLast
+	m.status, m.offline = nil, false
+	// Taken as given: the client already reconciles IsLast with whether there
+	// is a token to follow, and re-deriving it here would only invite the two
+	// answers to drift apart.
+	m.applyPage(msg.result, msg.first)
+	return m.maybePage()
+}
 
-	if msg.first {
+// applyPage puts a result on screen. A first page replaces what is there,
+// keeping the user on the row they were reading: the fresh result set is a
+// different list, so the selection is restored by work item key rather than by
+// index, which would silently move them to a neighbour.
+func (m *Model) applyPage(result *jira.SearchResult, first bool) {
+	m.nextPage, m.isLast = result.NextPageToken, result.IsLast
+
+	var where anchor
+	if first {
+		where = m.list.anchor()
 		m.list.issues = nil
 	}
-	for i := range msg.result.Issues {
-		m.list.issues = append(m.list.issues, &msg.result.Issues[i])
+	for i := range result.Issues {
+		m.list.issues = append(m.list.issues, &result.Issues[i])
 	}
 	m.list.rows = m.rows()
+	if first {
+		m.list.restore(where)
+		return
+	}
 	m.list.clamp()
-	return m.maybePage()
 }
 
 // rows is how many issues fit between the header and the status line.
@@ -384,7 +484,7 @@ func (m *Model) rowLines(widths []int) []string {
 // modal: a modal has to be dismissed before the list can be looked at again.
 func (m *Model) statusLine() string {
 	if m.status != nil {
-		return errorStyle.Render(m.fit(m.status.Error()))
+		return errorStyle.Render(m.fit(m.withOfflineMarker(m.status.Error())))
 	}
 	var b strings.Builder
 	if n := len(m.list.issues); n > 0 {
@@ -400,13 +500,29 @@ func (m *Model) statusLine() string {
 		if b.Len() > 0 {
 			b.WriteString(" ")
 		}
-		b.WriteString("loading…")
+		// Refreshing and loading are different claims: one says rows are on
+		// the way, the other says the rows already up are being checked.
+		if m.refreshing {
+			b.WriteString("refreshing…")
+		} else {
+			b.WriteString("loading…")
+		}
 	}
 	if b.Len() > 0 {
 		b.WriteString("  ")
 	}
 	b.WriteString(m.query)
-	return statusStyle.Render(m.fit(b.String()))
+	return statusStyle.Render(m.fit(m.withOfflineMarker(b.String())))
+}
+
+// withOfflineMarker prefixes the offline state, which outlives any one failure: while the
+// site is unreachable the rows on screen are cached ones, and that is worth
+// saying for as long as it is true.
+func (m *Model) withOfflineMarker(line string) string {
+	if !m.offline {
+		return line
+	}
+	return "[offline] " + line
 }
 
 // fit truncates a free-text line to the terminal width, so a long JQL or a

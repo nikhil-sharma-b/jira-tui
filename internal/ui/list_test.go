@@ -25,7 +25,17 @@ type driver struct {
 
 func newDriver(t *testing.T, client jira.Client, cfg *config.Config) *driver {
 	t.Helper()
-	m, err := ui.New(ui.Options{Client: client, Config: cfg})
+	d := newPausedDriver(t, ui.Options{Client: client, Config: cfg})
+	d.flush()
+	return d
+}
+
+// newPausedDriver builds a driver with the startup commands queued but not
+// run, which is the only vantage point from which "what is on screen before
+// the network answers" can be asked at all.
+func newPausedDriver(t *testing.T, opts ui.Options) *driver {
+	t.Helper()
+	m, err := ui.New(opts)
 	if err != nil {
 		t.Fatalf("building the model: %v", err)
 	}
@@ -35,7 +45,6 @@ func newDriver(t *testing.T, client jira.Client, cfg *config.Config) *driver {
 	d := &driver{t: t, model: m}
 	d.queue(m.Init())
 	d.send(tea.WindowSizeMsg{Width: 100, Height: 20})
-	d.flush()
 	return d
 }
 
@@ -67,6 +76,55 @@ func (d *driver) flush() {
 			d.send(msg)
 		}
 	}
+}
+
+// step runs one queued command and feeds back what it produced, so a test can
+// advance the model one round trip at a time.
+func (d *driver) step() {
+	d.t.Helper()
+	if len(d.pending) == 0 {
+		d.t.Fatal("nothing is queued to step")
+	}
+	cmd := d.pending[0]
+	d.pending = d.pending[1:]
+	switch msg := cmd().(type) {
+	case nil:
+	case tea.BatchMsg:
+		for _, c := range msg {
+			d.queue(c)
+		}
+	default:
+		d.send(msg)
+	}
+}
+
+// stepUntil advances the model one queued command at a time until the screen
+// shows want, which is how a test observes an intermediate state without
+// running the requests queued behind it.
+func (d *driver) stepUntil(want string) {
+	d.t.Helper()
+	for len(d.pending) > 0 {
+		if strings.Contains(d.view(), want) {
+			return
+		}
+		d.step()
+	}
+	if !strings.Contains(d.view(), want) {
+		d.t.Fatalf("%q never reached the screen:\n%s", want, d.view())
+	}
+}
+
+// clearCache is what the :cache clear command will call once there is a
+// commandline to type it into; ticket 06 exposes the operation and ticket 07
+// binds the words to it.
+func (d *driver) clearCache() {
+	d.t.Helper()
+	model, ok := d.model.(*ui.Model)
+	if !ok {
+		d.t.Fatalf("the driver holds a %T, want a *ui.Model", d.model)
+	}
+	d.queue(model.ClearCache())
+	d.flush()
 }
 
 // keys types a sequence of already-normalized key names.
