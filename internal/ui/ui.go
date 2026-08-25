@@ -86,6 +86,11 @@ type Model struct {
 	// is requested, and the flag is what stops a held-down j from asking for
 	// the same page repeatedly.
 	loading bool
+	// pageFailed records that fetching a further page failed. Without it every
+	// motion near the end would re-fire the same failing request, turning a
+	// held-down j into a retry storm the user never asked for. R clears it.
+	pageFailed bool
+
 	// nextPage continues the result set, empty when there is no page after
 	// what is loaded. The endpoint reports no total, so how many work items
 	// match is not knowable without walking every page -- which is exactly
@@ -251,6 +256,7 @@ func (m *Model) reload() tea.Cmd {
 	}
 	m.list = list{rows: m.rows()}
 	m.nextPage, m.isLast, m.status, m.loading = "", false, nil, true
+	m.pageFailed = false
 	return m.search("")
 }
 
@@ -258,7 +264,7 @@ func (m *Model) reload() tea.Cmd {
 // end of what is loaded. One request is allowed to be outstanding, which is
 // what keeps a held-down motion from asking for the same page several times.
 func (m *Model) maybePage() tea.Cmd {
-	if m.loading || m.isLast || m.columns == nil || !m.list.wantsMore() {
+	if m.loading || m.isLast || m.pageFailed || m.columns == nil || !m.list.wantsMore() {
 		return nil
 	}
 	m.loading = true
@@ -293,14 +299,15 @@ func (m *Model) handlePage(msg pageMsg) tea.Cmd {
 	m.loading = false
 	if msg.err != nil {
 		m.status = msg.err
+		m.pageFailed = !msg.first
 		return nil
 	}
 	m.status = nil
 	m.nextPage = msg.result.NextPageToken
-	// A page with no token to follow it is the last one whatever it says, and
-	// an empty page ends the walk too: continuing would ask the same question
-	// again forever.
-	m.isLast = msg.result.IsLast || m.nextPage == "" || len(msg.result.Issues) == 0
+	// Taken as given: the client already reconciles the flag with whether
+	// there is a token to follow, and re-deriving it here would only invite
+	// the two answers to drift apart.
+	m.isLast = msg.result.IsLast
 
 	if msg.first {
 		m.list.issues = nil
@@ -320,7 +327,10 @@ func (m *Model) View() string {
 	if m.help.Visible() {
 		return m.help.String()
 	}
-	widths := layout(m.columns, m.list.visible(), m.now(), max(m.width-gutterWidth, 0))
+	// Measured over every loaded row rather than the visible ones: widths
+	// computed from what is on screen change as the screen scrolls, which
+	// re-flows the whole table under a user who only moved the cursor.
+	widths := layout(m.columns, m.list.issues, m.now(), max(m.width-gutterWidth, 0))
 
 	lines := make([]string, 0, m.height)
 	if len(m.columns) > 0 {

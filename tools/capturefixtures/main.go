@@ -71,7 +71,7 @@ func main() {
 
 		// One item per page, so that a site with only a handful of work items
 		// still produces a genuine continuation token.
-		{"searchpaged.200", searchPath(anyQuery, "", 1), email, token},
+		{"searchpage1.200", searchPath(anyQuery, "", 1), email, token},
 	}
 	if len(os.Args) == 3 {
 		p := "/rest/api/3/issue/" + url.PathEscape(os.Args[2]) + "?fields=description,comment,attachment"
@@ -84,10 +84,10 @@ func main() {
 
 	// The second page can only be asked for once the first has been read, so
 	// it is a second pass rather than another entry in the table.
-	if next := nextPageToken(dir + "/searchpaged.200.http"); next != "" {
-		fetch(site, dir, capture{"searchpaged2.200", searchPath(anyQuery, next, 1), email, token})
+	if next := nextPageToken(dir + "/searchpage1.200.http"); next != "" {
+		fetch(site, dir, capture{"searchpage2.200", searchPath(anyQuery, next, 1), email, token})
 	} else {
-		fmt.Println("searchpaged2.200 skipped: the first page carried no nextPageToken")
+		fmt.Println("searchpage2.200 skipped: the first page carried no nextPageToken")
 	}
 }
 

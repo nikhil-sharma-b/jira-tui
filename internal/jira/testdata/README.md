@@ -26,12 +26,17 @@ error shape rather than captured: provoking a real rate limit against a live
 site is antisocial, and the response body Jira returns for one is the same
 `errorMessages` envelope as every other error.
 
-`searchpage1.200` and `searchpage2.200` are likewise constructed, from the
-issue shape `search.200` recorded. A continuation token only appears once a
-query matches more items than one page holds, and the site these were captured
-against holds a single work item, so a genuine pair could not be recorded.
-They exist to cover `nextPageToken` decoding and the custom-field values that
-`Issue.Raw` has to preserve.
+`searchpage1.200` and `searchpage2.200` as committed are likewise constructed,
+from the issue shape `search.200` recorded. A continuation token only appears
+once a query matches more items than one page holds, and the site these were
+captured against holds a single work item, so a genuine pair could not be
+recorded. They exist to cover `nextPageToken` decoding and the custom-field
+values that `Issue.Raw` has to preserve.
+
+`tools/capturefixtures` does capture that pair under the same two names, one
+work item per page, and will overwrite the constructed files with genuine ones
+when run against a site holding more than one item. Prefer the real capture if
+you have such a site.
 
 To capture more, add a case to `tools/capturefixtures` and run it against your
 own site:

@@ -25,10 +25,6 @@ type fakeClient struct {
 	issues    []jira.Issue
 	searchErr error
 
-	// block, when non-nil, holds every Search until it is closed. It is how a
-	// test observes what happens while a request is in flight.
-	block chan struct{}
-
 	// Searches records every request the UI made, which is how field
 	// selection and duplicate paging are asserted on.
 	Searches []jira.SearchOptions
@@ -47,12 +43,8 @@ func (c *fakeClient) Fields(ctx context.Context) ([]jira.Field, error) {
 func (c *fakeClient) Search(ctx context.Context, opts jira.SearchOptions) (*jira.SearchResult, error) {
 	c.mu.Lock()
 	c.Searches = append(c.Searches, opts)
-	block := c.block
 	c.mu.Unlock()
 
-	if block != nil {
-		<-block
-	}
 	if c.searchErr != nil {
 		return nil, c.searchErr
 	}
@@ -85,8 +77,7 @@ func (c *fakeClient) Search(ctx context.Context, opts jira.SearchOptions) (*jira
 	return result, nil
 }
 
-// requests reports how many searches have been made, safely against a search
-// still parked on block.
+// requests reports what searches have been made.
 func (c *fakeClient) requests() []jira.SearchOptions {
 	c.mu.Lock()
 	defer c.mu.Unlock()

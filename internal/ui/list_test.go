@@ -528,3 +528,131 @@ func TestEmptyResultStillShowsTheColumnHeader(t *testing.T) {
 		t.Errorf("an empty result set drew no column header:\n%s", d.view())
 	}
 }
+
+// Field metadata we could not fetch is a transient failure, not a broken
+// config: it must not end the session the way an unresolvable column does.
+func TestFailedFieldMetadataLeavesTheUIUsable(t *testing.T) {
+	client := &fakeClient{fieldsErr: errors.New("the site is unreachable")}
+	m, err := ui.New(ui.Options{Client: client, Config: testConfig(t, nil)})
+	if err != nil {
+		t.Fatalf("building the model: %v", err)
+	}
+	d := &driver{t: t, model: m}
+	d.queue(m.Init())
+	d.send(tea.WindowSizeMsg{Width: 100, Height: 20})
+	d.flush()
+
+	if m.Err() != nil {
+		t.Errorf("a transient metadata failure ended the session: %v", m.Err())
+	}
+	if !strings.Contains(d.view(), "the site is unreachable") {
+		t.Errorf("the metadata failure is not in the status line:\n%s", d.view())
+	}
+	if len(client.requests()) != 0 {
+		t.Error("a search ran without the fields to build it from")
+	}
+
+	d.keys("?")
+	if !strings.Contains(d.view(), "MOTION") {
+		t.Error("the UI stopped responding after the metadata fetch failed")
+	}
+}
+
+// R is the way back from a transient failure, and it has to retry the step
+// that actually failed rather than the search that never ran.
+func TestReloadRetriesTheMetadataFetchThatFailed(t *testing.T) {
+	client := &fakeClient{fieldsErr: errors.New("the site is unreachable"), issues: sampleIssues(2)}
+	m, err := ui.New(ui.Options{Client: client, Config: testConfig(t, nil)})
+	if err != nil {
+		t.Fatalf("building the model: %v", err)
+	}
+	d := &driver{t: t, model: m}
+	d.queue(m.Init())
+	d.send(tea.WindowSizeMsg{Width: 100, Height: 20})
+	d.flush()
+
+	client.fieldsErr = nil
+	d.keys("R")
+
+	if !strings.Contains(d.view(), "ENG-1") {
+		t.Errorf("reloading after a metadata failure loaded nothing:\n%s", d.view())
+	}
+}
+
+// vim counts H and L in from the edge of the screen; M has no edge to count
+// from and takes none.
+func TestCountedViewportMotionsCountInFromTheEdge(t *testing.T) {
+	d := listWith(t, 30)
+	d.keys("G")
+	visible := d.visibleKeys()
+
+	cases := []struct {
+		name string
+		keys []string
+		want string
+	}{
+		{"3H", []string{"3", "H"}, visible[2]},
+		{"3L", []string{"3", "L"}, visible[len(visible)-3]},
+		{"H is the first visible row", []string{"H"}, visible[0]},
+		{"L is the last visible row", []string{"L"}, visible[len(visible)-1]},
+		{"a count past the top stops at the top", []string{"H"}, visible[0]},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			d := listWith(t, 30)
+			d.keys("G")
+			d.keys(c.keys...)
+			if got := d.selected(); got != c.want {
+				t.Errorf("after %v the selection is %s, want %s", c.keys, got, c.want)
+			}
+		})
+	}
+}
+
+// Widths computed from the rows on screen re-flow the whole table when the
+// user only moved the cursor, which is exactly the display corruption the
+// resize requirement is about.
+func TestScrollingDoesNotReflowTheColumns(t *testing.T) {
+	issues := sampleIssues(40)
+	// One row far down the list is much wider than the rest, so a layout
+	// measured from the visible rows cannot help but change when it scrolls
+	// into view.
+	issues[35].Summary = strings.Repeat("a very long summary indeed ", 4)
+	d := newDriver(t, &fakeClient{issues: issues}, testConfig(t, nil))
+
+	before := d.lines()[0]
+	d.keys("G")
+	if after := d.lines()[0]; after != before {
+		t.Errorf("scrolling re-laid out the header:\n before %q\n after  %q", before, after)
+	}
+}
+
+// One failed page must not become a request per keypress: the selection stays
+// near the end, so every further motion would ask again.
+func TestAFailedPageIsNotRetriedByEveryMotion(t *testing.T) {
+	client := &fakeClient{issues: sampleIssues(120)}
+	d := newDriver(t, client, testConfig(t, nil))
+
+	client.searchErr = errors.New("the site is unreachable")
+	d.keys("G")
+	if n := len(client.requests()); n != 2 {
+		t.Fatalf("%d searches were made, want 2", n)
+	}
+
+	d.keys("k")
+	d.keys("j")
+	d.keys("j")
+	if n := len(client.requests()); n != 2 {
+		t.Errorf("%d searches were made after the page failed, want no further attempts", n)
+	}
+	if !strings.Contains(d.view(), "the site is unreachable") {
+		t.Errorf("the failure is not in the status line:\n%s", d.view())
+	}
+
+	// R is the way back: it must be willing to ask again.
+	client.searchErr = nil
+	d.keys("R")
+	if n := len(client.requests()); n != 3 {
+		t.Errorf("reloading made %d searches in total, want a fresh attempt", n)
+	}
+}

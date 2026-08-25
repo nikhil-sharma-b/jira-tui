@@ -74,10 +74,14 @@ var countable = map[config.Action]bool{
 	config.ActionHalfPageUp:   true,
 	config.ActionTop:          true,
 	config.ActionBottom:       true,
-	config.ActionSearchNext:   true,
-	config.ActionSearchPrev:   true,
-	config.ActionJumpBack:     true,
-	config.ActionJumpFwd:      true,
+	// H and L count lines in from the edge of the viewport, as in vim. M does
+	// not appear here: the middle of the screen admits no count.
+	config.ActionViewportTop: true,
+	config.ActionViewportBot: true,
+	config.ActionSearchNext:  true,
+	config.ActionSearchPrev:  true,
+	config.ActionJumpBack:    true,
+	config.ActionJumpFwd:     true,
 }
 
 // entersMode lists the actions that change the modal state. Text entry

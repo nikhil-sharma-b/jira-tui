@@ -53,8 +53,7 @@ func (l *list) visible() []*jira.Issue {
 }
 
 // move applies a motion. count is the numeric prefix, zero when none was
-// typed. It returns whether the selection changed, which is what decides
-// whether paging is worth reconsidering.
+// typed.
 func (l *list) move(action config.Action, count int) {
 	if len(l.issues) == 0 {
 		return
@@ -83,12 +82,14 @@ func (l *list) move(action config.Action, count int) {
 		l.cursor += n * half
 	case config.ActionHalfPageUp:
 		l.cursor -= n * half
+	// The viewport motions count lines in from an edge of the screen, as in
+	// vim, so 3H is the third visible row and 3L the third from the bottom.
 	case config.ActionViewportTop:
-		l.cursor = l.top
+		l.cursor = l.top + n - 1
 	case config.ActionViewportMid:
 		l.cursor = l.top + len(l.visible())/2
 	case config.ActionViewportBot:
-		l.cursor = l.top + len(l.visible()) - 1
+		l.cursor = l.top + len(l.visible()) - n
 	default:
 		return
 	}

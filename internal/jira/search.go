@@ -130,13 +130,6 @@ func (i *Issue) setField(id string, raw json.RawMessage) (bool, error) {
 		return true, unmarshalTime(raw, &i.Created)
 	case "updated":
 		return true, unmarshalTime(raw, &i.Updated)
-	case "description":
-		// Kept as bytes: rendering ADF belongs to internal/adf, and this
-		// package deliberately has no opinion on it.
-		if !isJSONNull(raw) {
-			i.Description = RawDocument(raw)
-		}
-		return true, nil
 	}
 	return false, nil
 }
