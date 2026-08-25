@@ -48,6 +48,11 @@ type fakeClient struct {
 	CommentCalls  []string
 	commentBlock  bool
 	commentStart  chan string
+
+	AddCommentCalls []struct{ Key, Body string }
+	addCommentErr   error
+	Descriptions    []struct{ Key, Body string }
+	descriptionErr  error
 }
 
 func (c *fakeClient) Fields(ctx context.Context) ([]jira.Field, error) {
@@ -195,11 +200,22 @@ func (c *fakeClient) commentRequests() []string {
 func (c *fakeClient) Transitions(context.Context, string) ([]jira.Transition, error) {
 	panic("ui list pane called Transitions")
 }
-func (c *fakeClient) AddComment(context.Context, string, string) (*jira.Comment, error) {
-	panic("ui list pane called AddComment")
+func (c *fakeClient) AddComment(_ context.Context, key, body string) (*jira.Comment, error) {
+	c.mu.Lock()
+	c.AddCommentCalls = append(c.AddCommentCalls, struct{ Key, Body string }{key, body})
+	err := c.addCommentErr
+	c.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
+	return &jira.Comment{ID: "created"}, nil
 }
-func (c *fakeClient) SetDescription(context.Context, string, string) error {
-	panic("ui list pane called SetDescription")
+func (c *fakeClient) SetDescription(_ context.Context, key, body string) error {
+	c.mu.Lock()
+	c.Descriptions = append(c.Descriptions, struct{ Key, Body string }{key, body})
+	err := c.descriptionErr
+	c.mu.Unlock()
+	return err
 }
 func (c *fakeClient) Transition(context.Context, string, string) error {
 	panic("ui list pane called Transition")

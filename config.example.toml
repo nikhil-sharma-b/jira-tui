@@ -10,7 +10,9 @@ default_query = "assignee = currentUser() AND resolution = Unresolved ORDER BY u
 columns = ["key", "summary", "status", "assignee", "priority", "updated"]
 
 leader = " "
-# editor = "nvim"      # defaults to $EDITOR
+# Editor command and optional flags. Resolution is this value, then $EDITOR,
+# then vi. The scratch filename is passed as one final argument without a shell.
+# editor = "nvim -f"
 images = "off"         # "sixel" reserved for a later version
 
 [site]

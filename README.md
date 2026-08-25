@@ -46,3 +46,8 @@ jt               # $JT_ISSUE, else inferred from git branch, else your open work
 ```
 
 Press `?` for the keymap.
+
+Comments and description edits open in the configured external editor. Set
+`editor = "nvim -f"` in config, or leave it unset to use `$EDITOR`, then `vi`.
+The editor command may include quoted flags. `jt` runs it directly, not through
+a shell.

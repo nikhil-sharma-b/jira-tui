@@ -149,6 +149,12 @@ func (c *REST) post(ctx context.Context, op, apiBase, path string, body, out any
 	return c.do(ctx, request{op: op, method: http.MethodPost, apiBase: apiBase, path: path, body: body, out: out})
 }
 
+// put performs an authenticated PUT of a JSON body. Like every write, it is
+// deliberately non-retrying.
+func (c *REST) put(ctx context.Context, op, apiBase, path string, body, out any) error {
+	return c.do(ctx, request{op: op, method: http.MethodPut, apiBase: apiBase, path: path, body: body, out: out})
+}
+
 // do is the only path to the network in this package: the concurrency cap, the
 // retry loop, the status code, the error body and Retry-After all meet here.
 // Keeping that in one place is the whole reason this package speaks HTTP
@@ -433,11 +439,28 @@ func (c *REST) Transitions(ctx context.Context, key string) ([]Transition, error
 }
 
 func (c *REST) AddComment(ctx context.Context, key, body string) (*Comment, error) {
-	panic("not implemented")
+	// Jira v2 returns the comment body as a markup string. Do not decode it
+	// into Comment.Body, which is reserved for v3 ADF reads.
+	var created struct {
+		ID string `json:"id"`
+	}
+	path := "/issue/" + url.PathEscape(key) + "/comment"
+	if err := c.post(ctx, "add comment", apiWrite, path, struct {
+		Body string `json:"body"`
+	}{Body: body}, &created); err != nil {
+		return nil, err
+	}
+	return &Comment{ID: created.ID}, nil
 }
 
 func (c *REST) SetDescription(ctx context.Context, key, body string) error {
-	panic("not implemented")
+	payload := struct {
+		Fields struct {
+			Description string `json:"description"`
+		} `json:"fields"`
+	}{}
+	payload.Fields.Description = body
+	return c.put(ctx, "set description", apiWrite, "/issue/"+url.PathEscape(key), payload, nil)
 }
 
 func (c *REST) Transition(ctx context.Context, key, transitionID string) error {

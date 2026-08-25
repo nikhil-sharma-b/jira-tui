@@ -38,6 +38,7 @@ type detailTickMsg struct{ request uint64 }
 // detailPane owns everything specific to one live work-item fetch and its
 // viewport. The root model only opens, cancels, moves, resizes, and renders it.
 type detailPane struct {
+	key             string
 	open            bool
 	loading         bool
 	issue           *jira.Issue
@@ -59,6 +60,7 @@ type detailPane struct {
 
 func (d *detailPane) fetch(client jira.Client, key string) []tea.Cmd {
 	d.cancelFetch()
+	d.key = key
 	d.open, d.loading, d.err, d.issue, d.top, d.frame = true, true, nil, nil, 0, 0
 	d.commentsLoading, d.comments, d.commentsErr = true, nil, nil
 	d.commentsOffset, d.jumpToComments = 0, false

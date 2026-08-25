@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -60,6 +61,9 @@ type Options struct {
 	Cache  *cache.Cache
 	Config *config.Config
 	Pin    string
+	// EditorExec defaults to tea.ExecProcess, which releases and restores the
+	// terminal around the configured editor.
+	EditorExec EditorExec
 }
 
 // Model is the root bubbletea model. It owns the query, the loaded result set
@@ -140,6 +144,13 @@ type Model struct {
 	err error
 
 	now func() time.Time
+
+	editorCommand             []string
+	editorExec                EditorExec
+	editorRequest             uint64
+	drafts                    map[draftKey]string
+	pendingDescription        string
+	pendingDescriptionRequest uint64
 }
 
 // New builds the root model. When Pin is set, detail opens full-width with the
@@ -156,18 +167,29 @@ func New(opts Options) (*Model, error) {
 	if err != nil {
 		return nil, err
 	}
+	editorCommand, err := cfg.ResolveEditor(os.Getenv)
+	if err != nil {
+		return nil, err
+	}
+	editorExec := opts.EditorExec
+	if editorExec == nil {
+		editorExec = tea.ExecProcess
+	}
 	m := &Model{
-		client:      opts.Client,
-		cfg:         cfg,
-		store:       store{cache: opts.Cache, site: cfg.SiteURL()},
-		dispatch:    NewDispatcher(bindings),
-		help:        NewHelp(bindings),
-		query:       cfg.DefaultQuery,
-		loading:     true,
-		listVisible: true,
-		pin:         opts.Pin,
-		jumps:       newJumplist(),
-		now:         time.Now,
+		client:        opts.Client,
+		cfg:           cfg,
+		store:         store{cache: opts.Cache, site: cfg.SiteURL()},
+		dispatch:      NewDispatcher(bindings),
+		help:          NewHelp(bindings),
+		query:         cfg.DefaultQuery,
+		loading:       true,
+		listVisible:   true,
+		pin:           opts.Pin,
+		jumps:         newJumplist(),
+		now:           time.Now,
+		editorCommand: editorCommand,
+		editorExec:    editorExec,
+		drafts:        make(map[draftKey]string),
 	}
 	if opts.Pin != "" {
 		m.listVisible = false
@@ -279,7 +301,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handlePage(msg)
 
 	case detailMsg:
-		m.detail.handle(msg)
+		accepted := m.detail.handle(msg)
+		if accepted && m.pendingDescription != "" && msg.request != m.pendingDescriptionRequest {
+			m.pendingDescription = ""
+		}
+		if accepted && msg.err == nil && msg.request == m.pendingDescriptionRequest && m.pendingDescription != "" && m.detail.issue != nil && m.detail.issue.Key == m.pendingDescription {
+			key := m.pendingDescription
+			m.pendingDescription = ""
+			return m, m.openEditor(writeDescription, key)
+		}
+		if accepted && msg.err != nil {
+			m.pendingDescription = ""
+		}
 		return m, nil
 
 	case commentsMsg:
@@ -290,6 +323,18 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case detailTickMsg:
 		return m, m.detail.handleTick(msg)
+
+	case editorStartMsg:
+		return m, m.handleEditorStart(msg)
+
+	case editorDoneMsg:
+		return m, m.handleEditorDone(msg)
+
+	case editorReadMsg:
+		return m, m.handleEditorRead(msg)
+
+	case writeDoneMsg:
+		return m, m.handleWriteDone(msg)
 	}
 	return m, nil
 }
@@ -406,6 +451,10 @@ func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
 		return m.jump(1, count)
 	case config.ActionReload:
 		return m.reload()
+	case config.ActionComment:
+		return m.beginWrite(writeComment)
+	case config.ActionEditDesc:
+		return m.beginWrite(writeDescription)
 	}
 
 	listVisible, detailVisible := m.visiblePanes()

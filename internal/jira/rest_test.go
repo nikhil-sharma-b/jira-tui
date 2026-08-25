@@ -178,6 +178,77 @@ func TestCommentsFetchesEveryPageAndReturnsOldestFirst(t *testing.T) {
 	}
 }
 
+func TestAddCommentPostsPlainMarkupOnceThroughV2(t *testing.T) {
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPost || r.URL.Path != "/rest/api/2/issue/ENG-1/comment" {
+			t.Errorf("request = %s %s, want POST /rest/api/2/issue/ENG-1/comment", r.Method, r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if got := body["body"]; got != "h2. Diagnosis\n\n* Replace the relay" {
+			t.Errorf("body = %#v, want the plain markup string", got)
+		}
+		http.Error(w, `{"errorMessages":["temporary failure"]}`, http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+
+	_, err := newClient(t, srv.URL).AddComment(context.Background(), "ENG-1", "h2. Diagnosis\n\n* Replace the relay")
+	if err == nil {
+		t.Fatal("AddComment succeeded, want the server failure")
+	}
+	if requests != 1 {
+		t.Errorf("sent %d requests, want exactly 1 non-retried write", requests)
+	}
+}
+
+func TestAddCommentAcceptsTheV2PlainStringResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"10000","body":"h2. Plain markup"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	comment, err := newClient(t, srv.URL).AddComment(context.Background(), "ENG-1", "h2. Plain markup")
+	if err != nil {
+		t.Fatalf("AddComment: %v", err)
+	}
+	if comment.ID != "10000" || !comment.Body.IsEmpty() {
+		t.Errorf("comment = %#v, want ID only without treating v2 body as ADF", comment)
+	}
+}
+
+func TestSetDescriptionPutsPlainMarkupOnceThroughV2(t *testing.T) {
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPut || r.URL.Path != "/rest/api/2/issue/ENG-1" {
+			t.Errorf("request = %s %s, want PUT /rest/api/2/issue/ENG-1", r.Method, r.URL.Path)
+		}
+		var body map[string]map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if got := body["fields"]["description"]; got != "Replacement *markup*" {
+			t.Errorf("description = %#v, want the plain markup string", got)
+		}
+		http.Error(w, `{"errorMessages":["temporary failure"]}`, http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+
+	err := newClient(t, srv.URL).SetDescription(context.Background(), "ENG-1", "Replacement *markup*")
+	if err == nil {
+		t.Fatal("SetDescription succeeded, want the server failure")
+	}
+	if requests != 1 {
+		t.Errorf("sent %d requests, want exactly 1 non-retried write", requests)
+	}
+}
+
 func equalInts(a, b []int) bool {
 	if len(a) != len(b) {
 		return false
