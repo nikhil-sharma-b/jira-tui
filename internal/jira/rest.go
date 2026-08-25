@@ -346,7 +346,19 @@ func retryAfter(resp *http.Response) time.Duration {
 }
 
 func (c *REST) Issue(ctx context.Context, key string, fields []string) (*Issue, error) {
-	panic("not implemented")
+	q := url.Values{}
+	if len(fields) > 0 {
+		q.Set("fields", strings.Join(fields, ","))
+	}
+	var wire issueWire
+	if err := c.get(ctx, "issue", apiRead, "/issue/"+url.PathEscape(key), q, &wire); err != nil {
+		return nil, err
+	}
+	issue, err := wire.issue()
+	if err != nil {
+		return nil, fmt.Errorf("issue: %w", err)
+	}
+	return &issue, nil
 }
 
 func (c *REST) Comments(ctx context.Context, key string) ([]Comment, error) {

@@ -34,6 +34,14 @@ type fakeClient struct {
 	// fieldCalls counts metadata fetches, which is how a cache hit on the
 	// ~24h tier is observed: the call simply does not happen.
 	fieldCalls int
+
+	// IssueCalls records live detail fetches. issueErrFor and issueBlock let
+	// detail-pane tests exercise failures and cancellation at the Jira seam.
+	IssueCalls  []string
+	IssueFields [][]string
+	issueErrFor map[string]error
+	issueBlock  bool
+	issueStart  chan string
 }
 
 func (c *fakeClient) Fields(ctx context.Context) ([]jira.Field, error) {
@@ -106,8 +114,51 @@ func (c *fakeClient) requests() []jira.SearchOptions {
 
 // The rest of the seam is unreached by the list pane. They fail loudly rather
 // than returning a zero value, so a test that starts depending on one says so.
-func (c *fakeClient) Issue(context.Context, string, []string) (*jira.Issue, error) {
-	panic("ui list pane called Issue")
+func (c *fakeClient) Issue(ctx context.Context, key string, fields []string) (*jira.Issue, error) {
+	c.mu.Lock()
+	c.IssueCalls = append(c.IssueCalls, key)
+	c.IssueFields = append(c.IssueFields, append([]string(nil), fields...))
+	err := c.issueErrFor[key]
+	block, started := c.issueBlock, c.issueStart
+	var found *jira.Issue
+	for i := range c.issues {
+		if c.issues[i].Key == key {
+			copy := c.issues[i]
+			found = &copy
+			break
+		}
+	}
+	c.mu.Unlock()
+
+	if started != nil {
+		started <- key
+	}
+	if block {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	if err != nil {
+		return nil, err
+	}
+	if found == nil {
+		return nil, fmt.Errorf("unknown fake issue %s", key)
+	}
+	return found, nil
+}
+
+func (c *fakeClient) requestedIssueFields() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.IssueFields) == 0 {
+		return nil
+	}
+	return append([]string(nil), c.IssueFields[len(c.IssueFields)-1]...)
+}
+
+func (c *fakeClient) issueRequests() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.IssueCalls...)
 }
 func (c *fakeClient) Comments(context.Context, string) ([]jira.Comment, error) {
 	panic("ui list pane called Comments")

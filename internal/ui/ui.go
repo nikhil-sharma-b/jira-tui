@@ -80,7 +80,9 @@ type Model struct {
 	// built -- there is nothing to ask for before then.
 	columns []Column
 
-	list list
+	list   list
+	detail detailPane
+	focus  Pane
 
 	// prompt is the commandline or the search line while one is open, nil in
 	// normal mode. It is paired with the dispatcher's modal state, which is
@@ -235,6 +237,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.list.rows = m.rows()
 		m.list.clamp()
+		m.resizeDetail()
 		return m, nil
 
 	case tea.KeyMsg:
@@ -254,6 +257,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case pageMsg:
 		return m, m.handlePage(msg)
+
+	case detailMsg:
+		if m.detail.handle(msg) {
+			m.focus = PaneDetail
+		}
+		return m, nil
+
+	case detailTickMsg:
+		return m, m.detail.handleTick(msg)
 	}
 	return m, nil
 }
@@ -338,16 +350,33 @@ func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
 		return m.moveToMatch(-1, max(count, 1), false)
 	case config.ActionClosePane:
 		return m.closePane()
+	case config.ActionOpen:
+		return m.openDetail()
 	case config.ActionReload:
 		return m.reload()
 	}
 
+	if m.focus == PaneDetail && m.detail.open && !m.detail.loading {
+		m.detail.move(action, count)
+		return nil
+	}
 	before := m.list.cursor
 	m.list.move(action, count)
 	if m.list.cursor == before {
 		return nil
 	}
+	m.detail.selectionMoved()
 	return m.maybePage()
+}
+
+func (m *Model) openDetail() tea.Cmd {
+	if len(m.list.issues) == 0 || m.list.cursor >= len(m.list.issues) {
+		return nil
+	}
+	m.focus = PaneDetail
+	cmd := m.detail.fetch(m.client, m.list.issues[m.list.cursor].Key)
+	m.resizeDetail()
+	return tea.Batch(cmd, m.detail.tick())
 }
 
 // reload discards the loaded rows and runs the query again from the top,
@@ -365,10 +394,16 @@ func (m *Model) reload() tea.Cmd {
 	return m.fetchPage("")
 }
 
-// closePane closes what is focused. With only the list on screen there is no
-// pane to close but the application itself; the detail pane is a later ticket,
-// and this is the one place that answer has to change when it lands.
-func (m *Model) closePane() tea.Cmd { return tea.Quit }
+// closePane closes detail when it exists and quits when the list is the last
+// pane. Both q and :q come through this one decision.
+func (m *Model) closePane() tea.Cmd {
+	if m.detail.open {
+		m.detail.close()
+		m.focus = PaneList
+		return nil
+	}
+	return tea.Quit
+}
 
 // newCommandPrompt opens the commandline over the session's history and the
 // command table's own completions.
@@ -547,24 +582,77 @@ func (m *Model) View() string {
 	if m.help.Visible() {
 		return m.help.String()
 	}
-	// Measured over every loaded row rather than the visible ones: widths
-	// computed from what is on screen change as the screen scrolls, which
-	// re-flows the whole table under a user who only moved the cursor.
-	widths := layout(m.columns, m.list.issues, m.now(), max(m.width-gutterWidth, 0))
-
-	lines := make([]string, 0, m.height)
-	if len(m.columns) > 0 {
-		lines = append(lines, header(m.columns, widths))
+	if m.detail.open {
+		return m.twoPaneView()
 	}
-	lines = append(lines, m.body(widths)...)
-
-	// The footer is pinned to the bottom, so its position does not move with
-	// the number of rows that happened to load.
 	footer := m.footer()
+	lines := m.listPane(m.width, max(m.height-len(footer), 0))
 	for len(lines) < max(m.height-len(footer), 0) {
 		lines = append(lines, "")
 	}
 	return strings.Join(append(lines, footer...), "\n")
+}
+
+func (m *Model) paneWidths() (int, int) {
+	available := max(m.width-1, 0)
+	left := available * 45 / 100
+	return left, available - left
+}
+
+func (m *Model) resizeDetail() {
+	if !m.detail.open {
+		return
+	}
+	_, right := m.paneWidths()
+	m.detail.resize(right, max(m.height-len(m.footer()), 0))
+}
+
+func (m *Model) twoPaneView() string {
+	footer := m.footer()
+	bodyRows := max(m.height-len(footer), 0)
+	leftWidth, rightWidth := m.paneWidths()
+	left := m.listPane(leftWidth, bodyRows)
+	right := m.detail.view()
+
+	lines := make([]string, bodyRows)
+	for i := range bodyRows {
+		l, r := "", ""
+		if i < len(left) {
+			l = left[i]
+		}
+		if i < len(right) {
+			r = right[i]
+		}
+		if pad := leftWidth - ansi.StringWidth(l); pad > 0 {
+			l += strings.Repeat(" ", pad)
+		}
+		lines[i] = fitWidth(l, leftWidth) + "│" + fitWidth(r, rightWidth)
+	}
+	return strings.Join(append(lines, footer...), "\n")
+}
+
+func (m *Model) listPane(width, rows int) []string {
+	widths := layout(m.columns, m.list.issues, m.now(), max(width-gutterWidth, 0))
+	lines := make([]string, 0, rows)
+	if len(m.columns) > 0 && rows > 0 {
+		lines = append(lines, fitWidth(header(m.columns, widths), width))
+	}
+	switch {
+	case len(m.list.issues) > 0:
+		for _, line := range m.rowLines(widths) {
+			lines = append(lines, fitWidth(line, width))
+		}
+	case m.loading:
+		lines = append(lines, fitWidth("Loading…", width))
+	case m.status != nil:
+		lines = append(lines, fitWidth("The query did not run.", width))
+	default:
+		lines = append(lines, fitWidth("No work items match this query.", width))
+	}
+	if len(lines) > rows {
+		lines = lines[:rows]
+	}
+	return lines
 }
 
 // footer is the bottom of the screen: the line being typed if one is, and
@@ -579,22 +667,6 @@ func (m *Model) footer() []string {
 		return []string{m.fit(statusStyle.Render(strings.Join(m.prompt.candidates, "  "))), line}
 	}
 	return []string{line}
-}
-
-// body is the rows, or the one line that explains why there are none.
-func (m *Model) body(widths []int) []string {
-	switch {
-	case len(m.list.issues) > 0:
-		return m.rowLines(widths)
-	case m.loading:
-		return []string{m.fit("Loading…")}
-	case m.status != nil:
-		// The reason is in the status line; the pane says why it is bare so
-		// that an empty result and a failed request do not look alike.
-		return []string{m.fit("The query did not run.")}
-	default:
-		return []string{m.fit("No work items match this query.")}
-	}
 }
 
 func (m *Model) rowLines(widths []int) []string {

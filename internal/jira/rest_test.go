@@ -88,6 +88,19 @@ func TestMyselfUsesReadAPIVersion(t *testing.T) {
 	}
 }
 
+func TestIssueRequestsTheNamedFieldsFromV3(t *testing.T) {
+	srv := newFixtureServer(t, map[string]string{"/rest/api/3/issue/ENG-1": "notfound.404"})
+	_, _ = newClient(t, srv.URL).Issue(context.Background(), "ENG-1", []string{"summary", "description"})
+
+	if len(srv.Requests) != 1 {
+		t.Fatalf("sent %d requests, want 1", len(srv.Requests))
+	}
+	req := srv.Requests[0]
+	if got := req.URL.Query().Get("fields"); got != "summary,description" {
+		t.Errorf("fields = %q, want summary,description", got)
+	}
+}
+
 func TestErrorsCarryStatusAndJiraMessages(t *testing.T) {
 	tests := []struct {
 		name        string

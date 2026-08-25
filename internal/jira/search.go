@@ -130,6 +130,13 @@ func (i *Issue) setField(id string, raw json.RawMessage) (bool, error) {
 		return true, unmarshalTime(raw, &i.Created)
 	case "updated":
 		return true, unmarshalTime(raw, &i.Updated)
+	case "description":
+		if isJSONNull(raw) {
+			i.Description = nil
+		} else {
+			i.Description = append(i.Description[:0], raw...)
+		}
+		return true, nil
 	}
 	return false, nil
 }
