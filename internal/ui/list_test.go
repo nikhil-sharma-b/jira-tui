@@ -21,6 +21,9 @@ type driver struct {
 	t       *testing.T
 	model   tea.Model
 	pending []tea.Cmd
+	// quit records that the model asked bubbletea to exit, which is the only
+	// observable form of ":qa" and of closing the last pane.
+	quit bool
 }
 
 func newDriver(t *testing.T, client jira.Client, cfg *config.Config) *driver {
@@ -66,15 +69,23 @@ func (d *driver) flush() {
 	for len(d.pending) > 0 {
 		cmd := d.pending[0]
 		d.pending = d.pending[1:]
-		switch msg := cmd().(type) {
-		case nil:
-		case tea.BatchMsg:
-			for _, c := range msg {
-				d.queue(c)
-			}
-		default:
-			d.send(msg)
+		d.deliver(cmd())
+	}
+}
+
+// deliver feeds one command's result back in, unwrapping a batch and noting a
+// quit, which no model of ours has an Update case for.
+func (d *driver) deliver(msg tea.Msg) {
+	switch msg := msg.(type) {
+	case nil:
+	case tea.QuitMsg:
+		d.quit = true
+	case tea.BatchMsg:
+		for _, c := range msg {
+			d.queue(c)
 		}
+	default:
+		d.send(msg)
 	}
 }
 
@@ -87,15 +98,7 @@ func (d *driver) step() {
 	}
 	cmd := d.pending[0]
 	d.pending = d.pending[1:]
-	switch msg := cmd().(type) {
-	case nil:
-	case tea.BatchMsg:
-		for _, c := range msg {
-			d.queue(c)
-		}
-	default:
-		d.send(msg)
-	}
+	d.deliver(cmd())
 }
 
 // stepUntil advances the model one queued command at a time until the screen
@@ -114,25 +117,30 @@ func (d *driver) stepUntil(want string) {
 	}
 }
 
-// clearCache is what the :cache clear command will call once there is a
-// commandline to type it into; ticket 06 exposes the operation and ticket 07
-// binds the words to it.
-func (d *driver) clearCache() {
-	d.t.Helper()
-	model, ok := d.model.(*ui.Model)
-	if !ok {
-		d.t.Fatalf("the driver holds a %T, want a *ui.Model", d.model)
-	}
-	d.queue(model.ClearCache())
-	d.flush()
-}
-
 // keys types a sequence of already-normalized key names.
 func (d *driver) keys(names ...string) {
 	for _, name := range names {
 		d.send(keyMsg(name))
 	}
 	d.flush()
+}
+
+// typeText types text one rune at a time, which is what a user does and what
+// distinguishes a run of characters from a key with a multi-character name.
+func (d *driver) typeText(text string) {
+	for _, r := range text {
+		d.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+	d.flush()
+}
+
+// command types a whole commandline, leading colon and all, and submits it --
+// which is the only way anything on the commandline is reached.
+func (d *driver) command(line string) {
+	d.t.Helper()
+	d.keys(":")
+	d.typeText(strings.TrimPrefix(line, ":"))
+	d.keys("enter")
 }
 
 func keyMsg(name string) tea.KeyMsg {
@@ -145,6 +153,18 @@ func keyMsg(name string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyEnter}
 	case "esc":
 		return tea.KeyMsg{Type: tea.KeyEsc}
+	case "tab":
+		return tea.KeyMsg{Type: tea.KeyTab}
+	case "backspace":
+		return tea.KeyMsg{Type: tea.KeyBackspace}
+	case "up":
+		return tea.KeyMsg{Type: tea.KeyUp}
+	case "down":
+		return tea.KeyMsg{Type: tea.KeyDown}
+	case "left":
+		return tea.KeyMsg{Type: tea.KeyLeft}
+	case "right":
+		return tea.KeyMsg{Type: tea.KeyRight}
 	}
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(name)}
 }

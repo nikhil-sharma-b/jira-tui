@@ -24,6 +24,9 @@ type fakeClient struct {
 	// page at a time.
 	issues    []jira.Issue
 	searchErr error
+	// searchErrFor fails only the queries named in it, so one session can run
+	// a query that works and then one the server rejects.
+	searchErrFor map[string]error
 
 	// Searches records every request the UI made, which is how field
 	// selection and duplicate paging are asserted on.
@@ -52,6 +55,9 @@ func (c *fakeClient) Search(ctx context.Context, opts jira.SearchOptions) (*jira
 	c.Searches = append(c.Searches, opts)
 	c.mu.Unlock()
 
+	if err := c.searchErrFor[opts.JQL]; err != nil {
+		return nil, err
+	}
 	if c.searchErr != nil {
 		return nil, c.searchErr
 	}

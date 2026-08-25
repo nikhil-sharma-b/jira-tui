@@ -175,7 +175,7 @@ func (m *Model) handleCachedPage(msg cachedPageMsg) tea.Cmd {
 		return nil
 	}
 	if msg.result == nil {
-		return m.search("")
+		return m.fetchPage("")
 	}
 	m.applyPage(msg.result, true)
 	if msg.fresh {
@@ -186,5 +186,5 @@ func (m *Model) handleCachedPage(msg cachedPageMsg) tea.Cmd {
 	// loading is what stops a motion from firing a second request underneath
 	// this one.
 	m.loading, m.refreshing = true, true
-	return m.search("")
+	return m.fetchPage("")
 }

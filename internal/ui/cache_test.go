@@ -217,7 +217,7 @@ func TestClearingTheCacheForcesTheNextViewToRefetch(t *testing.T) {
 	d := newPausedDriver(t, ui.Options{Client: client, Config: cfg, Cache: c})
 	d.flush()
 
-	d.clearCache()
+	d.command(":cache clear")
 
 	if n := len(client.requests()); n != 1 {
 		t.Errorf("clearing the cache made %d searches, want 1", n)

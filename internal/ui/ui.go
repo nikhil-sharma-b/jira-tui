@@ -82,6 +82,20 @@ type Model struct {
 
 	list list
 
+	// prompt is the commandline or the search line while one is open, nil in
+	// normal mode. It is paired with the dispatcher's modal state, which is
+	// what routes keys to it; openPrompt and closePrompt are the only two
+	// places that pairing is made or broken, so it has somewhere to be got
+	// right rather than being everyone's business.
+	prompt *prompt
+	// history is the commandline's, for this session. Search keeps none: the
+	// ticket asks for a command history, and a second one is a second thing
+	// to explain for a line that is usually retyped in full anyway.
+	history history
+	// search is the in-pane search: what is being looked for in the rows that
+	// are loaded.
+	search paneSearch
+
 	width, height int
 
 	// loading counts nothing more than "a request is out": one page at a time
@@ -96,9 +110,10 @@ type Model struct {
 	// state rather than an event -- cached rows stay browsable behind it --
 	// so it is shown until a request succeeds, not until a key is pressed.
 	offline bool
-	// pageFailed records that fetching a further page failed. Without it every
+	// pageFailed records that a request for rows failed. Without it every
 	// motion near the end would re-fire the same failing request, turning a
-	// held-down j into a retry storm the user never asked for. R clears it.
+	// held-down j into a retry storm the user never asked for. R clears it,
+	// and so does asking for a different query.
 	pageFailed bool
 
 	// nextPage continues the result set, empty when there is no page after
@@ -187,8 +202,8 @@ func (m *Model) fetchFields() tea.Cmd {
 	}
 }
 
-// search asks Jira for one page, and caches a first page that came back.
-func (m *Model) search(pageToken string) tea.Cmd {
+// fetchPage asks Jira for one page, and caches a first page that came back.
+func (m *Model) fetchPage(pageToken string) tea.Cmd {
 	client, query, st := m.client, m.query, m.store
 	opts := m.searchOptions(pageToken)
 	first := pageToken == ""
@@ -251,11 +266,54 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 	if msg.Type == tea.KeyCtrlC {
 		return tea.Quit
 	}
-	result := m.dispatch.Dispatch(msg.String())
-	if result.Kind != ResultAction {
+	switch result := m.dispatch.Dispatch(msg.String()); result.Kind {
+	case ResultText:
+		return m.handleText(result.Key)
+	case ResultAction:
+		return m.handleAction(result.Action, result.Count)
+	}
+	return nil
+}
+
+// handleText feeds a keypress to the open prompt. Nothing else can be in text
+// mode: the dispatcher reports text only while a mode was entered by an
+// action, and the actions that enter one are the actions that open a prompt.
+func (m *Model) handleText(key string) tea.Cmd {
+	if m.prompt == nil {
+		// The mode and the widget have come apart. The mode is the wrong one,
+		// since there is nothing on screen for these keys to be typed into.
+		m.dispatch.Reset()
 		return nil
 	}
-	return m.handleAction(result.Action, result.Count)
+	if !m.prompt.handle(key) {
+		return nil
+	}
+	line, mode := m.prompt.text(), m.prompt.mode
+	m.closePrompt()
+	if mode == ModeSearch {
+		return m.runSearch(line)
+	}
+	m.history.add(line)
+	return m.runCommand(line)
+}
+
+// openPrompt puts a line up to be typed into. Whatever was last reported has
+// been read or it has not; either way it is not what the user is typing about.
+func (m *Model) openPrompt(p *prompt) tea.Cmd {
+	// A line typed under a full-screen overlay is a line typed blind.
+	m.help.Hide()
+	m.status = nil
+	m.prompt = p
+	return nil
+}
+
+// closePrompt puts the widget away and the dispatcher back in normal mode, so
+// that submitting and cancelling leave the same state behind. Reset is
+// idempotent, which is what lets Esc -- already resolved to normal mode by the
+// dispatcher before any widget saw it -- come through here like anything else.
+func (m *Model) closePrompt() {
+	m.prompt = nil
+	m.dispatch.Reset()
 }
 
 func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
@@ -265,10 +323,21 @@ func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
 		return nil
 	}
 	switch action {
+	case config.ActionNormalMode:
+		// Esc abandons whatever was being typed and leaves everything else --
+		// the rows, the query, the search pattern -- alone.
+		m.closePrompt()
+		return nil
+	case config.ActionCommandline:
+		return m.openPrompt(m.newCommandPrompt())
+	case config.ActionSearchInPane:
+		return m.openPrompt(m.newSearchPrompt())
+	case config.ActionSearchNext:
+		return m.moveToMatch(1, max(count, 1), false)
+	case config.ActionSearchPrev:
+		return m.moveToMatch(-1, max(count, 1), false)
 	case config.ActionClosePane:
-		// With only the list on screen there is no pane to close but the
-		// application itself.
-		return tea.Quit
+		return m.closePane()
 	case config.ActionReload:
 		return m.reload()
 	}
@@ -292,19 +361,66 @@ func (m *Model) reload() tea.Cmd {
 		return m.fetchFields()
 	}
 	m.list = list{rows: m.rows()}
-	m.nextPage, m.isLast, m.status, m.loading = "", false, nil, true
-	m.pageFailed, m.refreshing = false, false
-	return m.search("")
+	m.beginQuery()
+	return m.fetchPage("")
 }
 
-// ClearCache empties the store and runs the current view again, so the next
-// thing on screen came from Jira. It is what :cache clear binds to; the
-// commandline that types those words is a later ticket.
+// closePane closes what is focused. With only the list on screen there is no
+// pane to close but the application itself; the detail pane is a later ticket,
+// and this is the one place that answer has to change when it lands.
+func (m *Model) closePane() tea.Cmd { return tea.Quit }
+
+// newCommandPrompt opens the commandline over the session's history and the
+// command table's own completions.
+func (m *Model) newCommandPrompt() *prompt {
+	// The walk belongs to the line about to be typed, not to the session.
+	m.history.reset()
+	return &prompt{mode: ModeCommand, sigil: ":", history: &m.history, complete: m.completeCommandLine}
+}
+
+// newSearchPrompt opens the in-pane search line. It completes nothing: the
+// candidates would be the rows themselves, which is what the search is for.
+func (m *Model) newSearchPrompt() *prompt {
+	return &prompt{mode: ModeSearch, sigil: "/"}
+}
+
+// runQuery puts a different JQL on screen. Unlike reload it does not empty the
+// list first: a query the server rejects must leave the rows the user was
+// reading up, and a query it accepts replaces them when its own page lands.
+//
+// It goes through the cache like any other view. R is the one thing that
+// bypasses it, because R is what the user presses when they do not believe
+// what is on screen.
+func (m *Model) runQuery(query string) tea.Cmd {
+	m.query = query
+	m.beginQuery()
+	if m.columns == nil {
+		// Nothing can be asked for until the field metadata resolves. What is
+		// already in flight for it will run this query when it lands, because
+		// it reads the query from the model rather than carrying its own.
+		return nil
+	}
+	return m.loadPage()
+}
+
+// beginQuery forgets everything that described the result set that was on
+// screen, which is what R and :jql both have to do before the first page of
+// the next one can arrive. It leaves the rows alone: whether they stay up
+// while the answer is fetched is the caller's decision, and the two callers
+// decide differently.
+func (m *Model) beginQuery() {
+	m.nextPage, m.isLast = "", false
+	m.status, m.pageFailed = nil, false
+	m.loading, m.refreshing = true, false
+}
+
+// clearCache empties the store and runs the current view again, so the next
+// thing on screen came from Jira. It is what :cache clear binds to.
 //
 // The delete runs in a command rather than here: another session may hold the
 // write lock, and waiting for it on the update loop is a UI that has stopped
 // repainting for as long as that takes.
-func (m *Model) ClearCache() tea.Cmd {
+func (m *Model) clearCache() tea.Cmd {
 	st := m.store
 	return tea.Batch(func() tea.Msg { return clearedMsg{err: st.clear()} }, m.reload())
 }
@@ -329,7 +445,7 @@ func (m *Model) maybePage() tea.Cmd {
 		return nil
 	}
 	m.loading = true
-	return m.search(m.nextPage)
+	return m.fetchPage(m.nextPage)
 }
 
 func (m *Model) handleFields(msg fieldsMsg) tea.Cmd {
@@ -371,7 +487,7 @@ func (m *Model) handleFields(msg fieldsMsg) tea.Cmd {
 	// The site's fields moved under the cached ones, so what was asked for is
 	// not what is wanted.
 	m.list.rows = m.rows()
-	return m.search("")
+	return m.fetchPage("")
 }
 
 func (m *Model) handlePage(msg pageMsg) tea.Cmd {
@@ -386,7 +502,11 @@ func (m *Model) handlePage(msg pageMsg) tea.Cmd {
 		// reading is a note in the status line, not an empty pane.
 		m.status = msg.err
 		m.offline = jira.IsOffline(msg.err)
-		m.pageFailed = !msg.first
+		// Any failure closes the door on re-firing this request from a motion,
+		// first page or not. A rejected :jql leaves the previous query's rows
+		// up, and a motion over rows that are still there would otherwise ask
+		// for the rejected query again on every j.
+		m.pageFailed = true
 		return nil
 	}
 	m.status, m.offline = nil, false
@@ -438,12 +558,27 @@ func (m *Model) View() string {
 	}
 	lines = append(lines, m.body(widths)...)
 
-	// The status line is pinned to the bottom, so its position does not move
-	// with the number of rows that happened to load.
-	for len(lines) < max(m.height-1, 0) {
+	// The footer is pinned to the bottom, so its position does not move with
+	// the number of rows that happened to load.
+	footer := m.footer()
+	for len(lines) < max(m.height-len(footer), 0) {
 		lines = append(lines, "")
 	}
-	return strings.Join(append(lines, m.statusLine()), "\n")
+	return strings.Join(append(lines, footer...), "\n")
+}
+
+// footer is the bottom of the screen: the line being typed if one is, and
+// above it the completion candidates when the last Tab could not choose
+// between them.
+func (m *Model) footer() []string {
+	if m.prompt == nil {
+		return []string{m.statusLine()}
+	}
+	line := m.fit(m.prompt.render())
+	if len(m.prompt.candidates) > 0 {
+		return []string{m.fit(statusStyle.Render(strings.Join(m.prompt.candidates, "  "))), line}
+	}
+	return []string{line}
 }
 
 // body is the rows, or the one line that explains why there are none.
@@ -470,11 +605,14 @@ func (m *Model) rowLines(widths []int) []string {
 		text := row(m.columns, widths, func(c int) string {
 			return m.columns[c].Render(issue, now)
 		})
+		base, match := plainStyle, matchStyle
 		if m.list.top+i == m.list.cursor {
-			lines = append(lines, selectedStyle.Render(SelectedMarker+text))
-			continue
+			text = SelectedMarker + text
+			base, match = selectedStyle, selectedMatchStyle
+		} else {
+			text = strings.Repeat(" ", gutterWidth) + text
 		}
-		lines = append(lines, strings.Repeat(" ", gutterWidth)+text)
+		lines = append(lines, highlight(text, m.search.pattern, base, match))
 	}
 	return lines
 }

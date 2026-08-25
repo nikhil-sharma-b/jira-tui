@@ -23,6 +23,10 @@ func NewHelp(b *config.Bindings) *Help { return &Help{bindings: b} }
 // Visible reports whether the overlay is up.
 func (h *Help) Visible() bool { return h.visible }
 
+// Hide dismisses the overlay, which is what opening a prompt does: a line
+// being typed under a full-screen overlay is a line typed blind.
+func (h *Help) Hide() { h.visible = false }
+
 // HandleAction gives the overlay first refusal on an action, reporting whether
 // it consumed it. The overlay answers to exactly two: its own key toggles it,
 // and Esc dismisses it. Everything else belongs to the pane underneath.

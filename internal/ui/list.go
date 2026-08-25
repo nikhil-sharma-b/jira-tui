@@ -131,6 +131,14 @@ func (l *list) move(action config.Action, count int) {
 	l.clamp()
 }
 
+// selectRow puts the selection on an index and brings it on screen. It is the
+// list's own, so that anything with a row in mind -- a motion, a search --
+// says where to go rather than how the viewport follows.
+func (l *list) selectRow(i int) {
+	l.cursor = i
+	l.clamp()
+}
+
 // clamp keeps the selection inside the result set and the viewport around the
 // selection. Both are done together because a motion is only correct once the
 // row it selected is on screen.

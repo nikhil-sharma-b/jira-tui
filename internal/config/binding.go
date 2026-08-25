@@ -58,6 +58,28 @@ func isSingleKey(part string) bool {
 	return strings.Contains(part, "+")
 }
 
+// editingKeys are the normalized keys that name an edit or a motion rather
+// than a character. Text entry needs the same vocabulary the binding table
+// has, and this is derived from it so that there is still one place key syntax
+// is understood.
+var editingKeys = func() map[string]bool {
+	out := make(map[string]bool, len(namedKeys))
+	for _, normalized := range namedKeys {
+		if normalized == " " {
+			// Space is a character wherever it is typed. It has a name only so
+			// that a binding can be written for it.
+			continue
+		}
+		out[normalized] = true
+	}
+	return out
+}()
+
+// IsEditingKey reports whether a normalized key means an edit rather than a
+// character, which is what a text-entry widget has to know before it types
+// what it was sent.
+func IsEditingKey(key string) bool { return editingKeys[key] }
+
 // NormalizeKey puts a key into the one spelling the binding table uses, so a
 // key arriving from the terminal and a key written in config compare equal.
 func NormalizeKey(key string) string {
