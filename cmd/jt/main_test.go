@@ -12,6 +12,7 @@ import (
 
 	"github.com/nikhil-sharma-b/jira-tui/internal/config"
 	"github.com/nikhil-sharma-b/jira-tui/internal/jira"
+	"github.com/nikhil-sharma-b/jira-tui/internal/ui"
 )
 
 // fakeClient substitutes for the Jira client at its interface, which is the
@@ -24,10 +25,13 @@ type fakeClient struct {
 
 func (f fakeClient) Myself(context.Context) (*jira.User, error) { return f.me, f.err }
 
-// dialing returns a connector that hands back client, so run() can be driven
-// end to end without a network.
-func dialing(client jira.Client) connector {
-	return func(*config.Config, string) (jira.Client, error) { return client, nil }
+// dialing returns a session that hands back client and swallows the launch,
+// so run() is driven end to end without a network and without a terminal.
+func dialing(client jira.Client) session {
+	return session{
+		dial:   func(*config.Config, string) (jira.Client, error) { return client, nil },
+		launch: func(ui.Options) error { return nil },
+	}
 }
 
 // writeConfig puts a loadable config on disk and returns its path.
@@ -203,5 +207,69 @@ func TestAuthCheckDistinguishesFailures(t *testing.T) {
 				t.Errorf("wrote %q to stdout on failure, want nothing", out.String())
 			}
 		})
+	}
+}
+
+// Bare jt is the ordinary way in: no subcommand, no pin, the configured
+// default query on screen.
+func TestBareCommandLaunchesTheTUI(t *testing.T) {
+	var launched *ui.Options
+	s := dialing(fakeClient{})
+	s.launch = func(opts ui.Options) error {
+		launched = &opts
+		return nil
+	}
+
+	var out bytes.Buffer
+	if err := runWith([]string{"--config", writeConfig(t, validConfig)}, &out, &out, s); err != nil {
+		t.Fatalf("bare jt: %v", err)
+	}
+	if launched == nil {
+		t.Fatal("bare jt did not open the TUI")
+	}
+	if launched.Client == nil {
+		t.Error("the TUI was opened without a Jira client")
+	}
+	if launched.Config == nil {
+		t.Fatal("the TUI was opened without a config")
+	}
+	if launched.Config.Site.URL != "https://example.atlassian.net" {
+		t.Errorf("the TUI got site %q, want the configured one", launched.Config.Site.URL)
+	}
+	if launched.Pin != "" {
+		t.Errorf("bare jt pinned %q; nothing asked it to", launched.Pin)
+	}
+}
+
+// A config that cannot be loaded must be reported as text, not behind an
+// alternate screen that is torn down before it can be read.
+func TestBareCommandReportsConfigProblemsWithoutOpeningTheTUI(t *testing.T) {
+	opened := false
+	s := dialing(fakeClient{})
+	s.launch = func(ui.Options) error {
+		opened = true
+		return nil
+	}
+
+	var out bytes.Buffer
+	err := runWith([]string{"--config", filepath.Join(t.TempDir(), "absent.toml")}, &out, &out, s)
+	if err == nil {
+		t.Fatal("a missing config did not stop bare jt")
+	}
+	if opened {
+		t.Error("the TUI was opened despite the config failing to load")
+	}
+}
+
+// The failure the TUI ended on is the process's failure: it is the only way a
+// startup error reaches the user once the alternate screen is gone.
+func TestBareCommandReportsWhatTheTUIFailedOn(t *testing.T) {
+	s := dialing(fakeClient{})
+	s.launch = func(ui.Options) error { return errors.New(`columns: "Storey Points" is not a field on this site`) }
+
+	var out bytes.Buffer
+	err := runWith([]string{"--config", writeConfig(t, validConfig)}, &out, &out, s)
+	if err == nil || !strings.Contains(err.Error(), "Storey Points") {
+		t.Errorf("bare jt returned %v, want the failure the TUI ended on", err)
 	}
 }

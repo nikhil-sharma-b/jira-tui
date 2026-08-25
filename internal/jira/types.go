@@ -87,16 +87,26 @@ type SearchOptions struct {
 	// Fields selects which fields the server returns. Empty means the
 	// configured column set; requesting everything is the single biggest
 	// avoidable cost on a list fetch.
-	Fields     []string
-	StartAt    int
+	Fields []string
+
+	// PageToken continues a previous page. Empty asks for the first one.
+	//
+	// Paging is by opaque token rather than by offset because the endpoint
+	// that paged by offset, /rest/api/3/search, now answers 410 Gone. A token
+	// is also the more honest model for a live result set: an offset silently
+	// skips or repeats rows when items change rank between pages.
+	PageToken string
+
 	MaxResults int
 }
 
 type SearchResult struct {
-	Issues  []Issue
-	Total   int
-	StartAt int
-	// IsLast reports that no further pages exist. Prefer it over comparing
-	// StartAt+len against Total, which Jira does not always keep consistent.
+	Issues []Issue
+	// NextPageToken continues after this page, and is empty when there is no
+	// page after it.
+	NextPageToken string
+	// IsLast reports that no further pages exist. The endpoint sends it
+	// alongside the token, and it is the field to trust: a total is not
+	// returned at all, so counting rows cannot answer the same question.
 	IsLast bool
 }

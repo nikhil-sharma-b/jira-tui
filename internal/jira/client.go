@@ -9,7 +9,10 @@
 // differs. This avoids both writing a markup parser and building ADF.
 package jira
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 // Client is the seam. Everything above it -- UI, pickers, commandline, pin
 // resolution -- depends on this interface and nothing else in this package.
@@ -77,4 +80,22 @@ type Field struct {
 	Clauses []string `json:"clauseNames,omitempty"`
 }
 
-var _ = (*Field)(nil)
+// UnmarshalJSON flattens the schema object to the one part of it callers use.
+// The wire form nests type alongside a plugin key and a numeric id that only
+// repeat what ID and Custom already say, so keeping the object would widen the
+// type without widening what it can answer.
+func (f *Field) UnmarshalJSON(b []byte) error {
+	type field Field // shed the method, so this is not recursive
+	var wire struct {
+		field
+		Schema struct {
+			Type string `json:"type"`
+		} `json:"schema"`
+	}
+	if err := json.Unmarshal(b, &wire); err != nil {
+		return err
+	}
+	*f = Field(wire.field)
+	f.Schema = wire.Schema.Type
+	return nil
+}

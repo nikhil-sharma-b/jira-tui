@@ -345,10 +345,6 @@ func retryAfter(resp *http.Response) time.Duration {
 	return time.Duration(secs) * time.Second
 }
 
-func (c *REST) Search(ctx context.Context, opts SearchOptions) (*SearchResult, error) {
-	panic("not implemented")
-}
-
 func (c *REST) Issue(ctx context.Context, key string, fields []string) (*Issue, error) {
 	panic("not implemented")
 }
@@ -385,8 +381,15 @@ func (c *REST) DownloadAttachment(ctx context.Context, attachmentID string, dst 
 	panic("not implemented")
 }
 
+// Fields lists the site's field metadata. It is one call, cacheable for a day,
+// and it is what turns a configured column name into the id a search can ask
+// for.
 func (c *REST) Fields(ctx context.Context) ([]Field, error) {
-	panic("not implemented")
+	var fields []Field
+	if err := c.get(ctx, "fields", apiRead, "/field", nil, &fields); err != nil {
+		return nil, err
+	}
+	return fields, nil
 }
 
 func (c *REST) Myself(ctx context.Context) (*User, error) {

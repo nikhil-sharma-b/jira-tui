@@ -18,6 +18,7 @@ import (
 
 	"github.com/nikhil-sharma-b/jira-tui/internal/config"
 	"github.com/nikhil-sharma-b/jira-tui/internal/jira"
+	"github.com/nikhil-sharma-b/jira-tui/internal/ui"
 )
 
 // version is set at build time via -ldflags.
@@ -26,6 +27,7 @@ var version = "dev"
 const usage = `jt -- a vim-native TUI for Jira Cloud
 
 usage:
+  jt                    open the TUI on the default query
   jt [ISSUE-KEY]        open the TUI, pinned to a work item
   jt auth check         verify config, credential and connectivity
   jt version            print the version
@@ -42,12 +44,19 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) error {
-	return runWith(args, stdout, stderr, connect)
+	return runWith(args, stdout, stderr, session{dial: connect, launch: ui.Run})
 }
 
-// runWith is run with its one outward dependency -- how to reach Jira -- passed in,
-// so the command is exercised end to end in tests without a network.
-func runWith(args []string, stdout, stderr io.Writer, dial connector) error {
+// session is what the command needs from the outside world: how to reach Jira,
+// and how to put a UI on the terminal. Both are parameters so the command is
+// exercised end to end in tests without a network and without a terminal.
+type session struct {
+	dial   connector
+	launch launcher
+}
+
+// runWith is run with its outward dependencies passed in.
+func runWith(args []string, stdout, stderr io.Writer, s session) error {
 	fs := flag.NewFlagSet("jt", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() { fmt.Fprint(stderr, usage) }
@@ -60,7 +69,7 @@ func runWith(args []string, stdout, stderr io.Writer, dial connector) error {
 
 	switch {
 	case len(words) == 0:
-		return errors.New("the TUI is not built yet; try 'jt auth check'")
+		return openTUI(*configPath, s)
 	case words[0] == "version":
 		fmt.Fprintln(stdout, "jt", version)
 		return nil
@@ -68,7 +77,7 @@ func runWith(args []string, stdout, stderr io.Writer, dial connector) error {
 		if len(words) < 2 || words[1] != "check" {
 			return errors.New("usage: jt auth check")
 		}
-		return authCheck(context.Background(), stdout, *configPath, dial)
+		return authCheck(context.Background(), stdout, *configPath, s.dial)
 	default:
 		return fmt.Errorf("unknown command %q; run 'jt --help' for usage", words[0])
 	}
@@ -92,6 +101,11 @@ func parse(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
+// launcher opens the terminal UI and returns when the user leaves it. It is a
+// parameter for the same reason connector is: a test must be able to run the
+// command without owning a terminal.
+type launcher func(ui.Options) error
+
 // connector turns a validated config and a resolved token into a client. It
 // is a parameter so authCheck is testable without a network.
 type connector func(cfg *config.Config, token string) (jira.Client, error)
@@ -107,27 +121,51 @@ func connect(cfg *config.Config, token string) (jira.Client, error) {
 	})
 }
 
+// openTUI is the bare-jt path: load the config, resolve a credential, connect,
+// and hand all three to the UI. Everything that can be reported as plain text
+// is reported here, before the alternate screen exists to hide it.
+func openTUI(configPath string, s session) error {
+	cfg, token, err := loadSession(configPath)
+	if err != nil {
+		return err
+	}
+	client, err := s.dial(cfg, token)
+	if err != nil {
+		return err
+	}
+	return s.launch(ui.Options{Client: client, Config: cfg})
+}
+
+// loadSession resolves the two things every command past this point needs, in
+// the order whose failures are worth telling apart: a config that parses, then
+// a credential that resolves.
+func loadSession(configPath string) (*config.Config, string, error) {
+	if configPath == "" {
+		p, err := config.DefaultPath()
+		if err != nil {
+			return nil, "", err
+		}
+		configPath = p
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return nil, "", err
+	}
+	token, err := cfg.ResolveToken()
+	if err != nil {
+		return nil, "", err
+	}
+	return cfg, token, nil
+}
+
 // authCheck reports on the three things that must be true before anything else
 // works, and keeps their failures distinguishable: the config is readable and
 // well formed, a credential resolves and is accepted, and the site answers.
 func authCheck(ctx context.Context, stdout io.Writer, configPath string, dial connector) error {
-	if configPath == "" {
-		p, err := config.DefaultPath()
-		if err != nil {
-			return err
-		}
-		configPath = p
-	}
-
-	cfg, err := config.Load(configPath)
+	cfg, token, err := loadSession(configPath)
 	if err != nil {
 		return err
 	}
-	token, err := cfg.ResolveToken()
-	if err != nil {
-		return err
-	}
-
 	client, err := dial(cfg, token)
 	if err != nil {
 		return err
