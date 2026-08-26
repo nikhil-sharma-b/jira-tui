@@ -139,7 +139,7 @@ func Defaults() *Config {
 	return &Config{
 		DefaultQuery: DefaultQuery,
 		SavedQueries: map[string]string{},
-		Columns:      []string{"key", "summary", "status", "assignee", "priority", "updated"},
+		Columns:      []string{"key", "status", "issuetype", "summary", "assignee", "priority", "updated"},
 		Keys:         map[string]string{},
 		Leader:       " ",
 		Images:       "off",

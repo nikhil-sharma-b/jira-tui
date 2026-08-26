@@ -1,9 +1,11 @@
 package ui
 
 import (
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/nikhil-sharma-b/jira-tui/internal/config"
 	"github.com/nikhil-sharma-b/jira-tui/internal/jira"
 )
@@ -186,11 +188,53 @@ func (l *list) wantsMore() bool {
 	return l.cursor >= len(l.issues)-pageLookahead
 }
 
-// header renders the column titles at the given widths.
-func header(cols []Column, widths []int) string {
-	return headerStyle.Render(strings.Repeat(" ", gutterWidth) + row(cols, widths, func(i int) string {
-		return cols[i].Title
-	}))
+// header renders the column titles at the given widths, behind a right-aligned
+// "#" over the row numbers.
+func header(cols []Column, widths []int, numWidth int) string {
+	return headerStyle.Render(strings.Repeat(" ", gutterWidth) + numberCell("#", numWidth) +
+		row(cols, widths, func(i int) string {
+			return cols[i].Title
+		}))
+}
+
+// numberWidth is how wide the row-number column has to be to hold the largest
+// number that will be drawn in it, plus the gap after it. Zero rows means no
+// column at all rather than an empty one.
+func numberWidth(rows int) int {
+	if rows <= 0 {
+		return 0
+	}
+	return len(strconv.Itoa(rows)) + columnGap
+}
+
+// numberCell right-aligns a row number in a column of the given total width,
+// the gap after it included. Right alignment is what keeps the digits of a
+// three-figure list in one stack rather than a staircase.
+func numberCell(text string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if pad := width - columnGap - ansi.StringWidth(text); pad > 0 {
+		text = strings.Repeat(" ", pad) + text
+	}
+	return ansi.Truncate(text, width-columnGap, "") + strings.Repeat(" ", columnGap)
+}
+
+// styledRow assembles one line with each cell in its column's own colour. The
+// header and the selected row do not use it: both are one colour by design,
+// and a selected row striped in six is a row that no longer reads as selected.
+func styledRow(cols []Column, widths []int, at func(int) string) string {
+	var b strings.Builder
+	for i := range cols {
+		if widths[i] <= 0 {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString(strings.Repeat(" ", columnGap))
+		}
+		b.WriteString(cols[i].style.Render(cell(at(i), widths[i])))
+	}
+	return b.String()
 }
 
 // row assembles one line from a per-column cell function, skipping the columns
@@ -210,8 +254,11 @@ func row(cols []Column, widths []int, at func(int) string) string {
 }
 
 var (
-	headerStyle   = lipgloss.NewStyle().Bold(true)
-	selectedStyle = lipgloss.NewStyle().Reverse(true)
+	headerStyle = lipgloss.NewStyle().Bold(true).Foreground(accent)
+	// selectedStyle paints the whole selected row, as the reference TUI does,
+	// rather than reversing it: a solid band survives terminal themes that
+	// have their own reading of reverse-video.
+	selectedStyle = lipgloss.NewStyle().Foreground(selectionFG).Background(selectionBG)
 	statusStyle   = lipgloss.NewStyle().Faint(true)
 	errorStyle    = lipgloss.NewStyle().Bold(true)
 )

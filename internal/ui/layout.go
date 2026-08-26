@@ -22,8 +22,8 @@ const columnGap = 1
 // which columns are drawn at all. It returns one width per column; a zero
 // width means the column did not fit and is omitted.
 //
-// The rule is: every column gets what its content needs up to its natural cap,
-// the flexible column absorbs whatever is left, and when even the minimums do
+// The rule is: every column gets what its content needs, capped by its natural
+// width and by an equal share of the terminal, and when even the minimums do
 // not fit, columns are dropped from the right.
 func layout(cols []Column, issues []*jira.Issue, now time.Time, width int) []int {
 	widths := make([]int, len(cols))
@@ -31,6 +31,11 @@ func layout(cols []Column, issues []*jira.Issue, now time.Time, width int) []int
 		return widths
 	}
 
+	// No column may exceed an equal share of the terminal, whatever its
+	// content: one issue with a paragraph for a summary must not push every
+	// other column off to the right. Content narrower than its share keeps its
+	// own width, so short values do not pay for the cap either.
+	share := equalShare(len(cols), width)
 	for i, c := range cols {
 		w := ansi.StringWidth(c.Title)
 		for _, issue := range issues {
@@ -39,7 +44,7 @@ func layout(cols []Column, issues []*jira.Issue, now time.Time, width int) []int
 		if c.natural > 0 {
 			w = min(w, c.natural)
 		}
-		widths[i] = max(w, c.min)
+		widths[i] = max(min(w, share), c.min)
 	}
 
 	// Columns beyond what the minimums can pay for are dropped from the right,
@@ -63,11 +68,11 @@ func layout(cols []Column, issues []*jira.Issue, now time.Time, width int) []int
 		fitted[i]--
 	}
 
-	if slack := width - totalWidth(fitted); slack > 0 {
-		if i := flexIndex(visible); i >= 0 {
-			fitted[i] += slack
-		}
-	}
+	// Whatever the content left over, the table fills the pane: columns grow a
+	// character at a time, in turn, none past its equal share. The last few
+	// characters -- fewer than one per column -- go to the flexible column, so
+	// the right edge is flush rather than ragged.
+	grow(fitted, visible, width-totalWidth(fitted), share)
 
 	// A single column that still does not fit is truncated rather than
 	// dropped: something is always better than an empty pane.
@@ -75,6 +80,49 @@ func layout(cols []Column, issues []*jira.Issue, now time.Time, width int) []int
 		fitted[0] = width
 	}
 	return widths
+}
+
+// equalShare is the width one column may occupy when the terminal is divided
+// evenly between them, gaps included. It is a ceiling rather than an
+// allocation: a column that needs less keeps less, and the space it gives back
+// is simply left blank rather than handed to whichever column would grow.
+func equalShare(n, width int) int {
+	if n <= 0 {
+		return 0
+	}
+	return max((width-columnGap*(n-1))/n, 1)
+}
+
+// grow hands out slack evenly, capping each column at share so that no one
+// column absorbs the pane. Once every column is at its cap the remainder goes
+// to the flexible column, which is the one that reads best when it is wider.
+func grow(widths []int, cols []Column, slack, share int) {
+	for slack > 0 {
+		grew := false
+		for i := range widths {
+			if slack == 0 {
+				break
+			}
+			if widths[i] >= share {
+				continue
+			}
+			widths[i]++
+			slack--
+			grew = true
+		}
+		if !grew {
+			break
+		}
+	}
+	if slack > 0 {
+		i := flexIndex(cols)
+		if i < 0 {
+			i = len(widths) - 1
+		}
+		if i >= 0 {
+			widths[i] += slack
+		}
+	}
 }
 
 func minimumWidth(cols []Column) int {

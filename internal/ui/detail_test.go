@@ -170,7 +170,7 @@ func TestCommentLayoutRewrapsAfterPaneAndTerminalResizes(t *testing.T) {
 		}
 	}
 	for _, width := range []int{60, 100, 42} {
-		d.send(tea.WindowSizeMsg{Width: width, Height: 20})
+		d.send(tea.WindowSizeMsg{Width: width, Height: 22})
 		d.keys("g", "c")
 		for _, line := range d.lines() {
 			if got := ansi.StringWidth(line); got > width {
@@ -331,7 +331,7 @@ func TestEnterOpensLiveDetailBesideTheList(t *testing.T) {
 			t.Errorf("detail request omitted %q: %v", field, client.requestedIssueFields())
 		}
 	}
-	if !strings.Contains(view, "│") {
+	if !d.split() {
 		t.Errorf("list and detail have no visible split:\n%s", view)
 	}
 }
@@ -343,7 +343,7 @@ func TestDetailPaneRelaysOutOnResize(t *testing.T) {
 	d.keys("enter")
 
 	for _, width := range []int{100, 60, 32, 120} {
-		d.send(tea.WindowSizeMsg{Width: width, Height: 20})
+		d.send(tea.WindowSizeMsg{Width: width, Height: 22})
 		for _, line := range d.lines() {
 			if got := ansi.StringWidth(line); got > width {
 				t.Errorf("at width %d a line is %d columns wide: %q", width, got, line)

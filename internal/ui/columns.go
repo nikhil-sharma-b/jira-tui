@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/nikhil-sharma-b/jira-tui/internal/jira"
 )
 
@@ -29,6 +30,11 @@ type Column struct {
 
 	// render turns one issue into this column's cell.
 	render func(*jira.Issue, time.Time) string
+
+	// style colours the cell. A column reads faster when its kind of value
+	// always looks the same, so the colour belongs to the column rather than
+	// to the row drawing it. The zero style is plain text.
+	style lipgloss.Style
 
 	// min is the width below which the cell is no longer worth showing, and
 	// natural caps how wide it grows on content alone.
@@ -105,7 +111,7 @@ func resolveColumn(name string, index map[string][]jira.Field) (Column, error) {
 	// "issuekey" field, but naming it in a search request is how a list ends
 	// up paying for data it already has.
 	if key == "key" {
-		return Column{Title: "Key", min: 6, natural: 14, render: renderKey}, nil
+		return Column{Title: "Key", min: 6, natural: 14, render: renderKey, style: keyStyle}, nil
 	}
 
 	matches := index[key]
@@ -173,7 +179,7 @@ func applyShape(col *Column, id string) {
 		col.min, col.natural, col.flex = 20, 0, true
 	case "status":
 		col.render = func(i *jira.Issue, _ time.Time) string { return i.Status.Name }
-		col.min, col.natural = 6, 16
+		col.min, col.natural, col.style = 6, 16, stateStyle
 	case "assignee":
 		col.render = func(i *jira.Issue, _ time.Time) string { return userName(i.Assignee, "Unassigned") }
 		col.min, col.natural = 8, 18
@@ -187,22 +193,22 @@ func applyShape(col *Column, id string) {
 			}
 			return i.Priority.Name
 		}
-		col.min, col.natural = 4, 10
+		col.min, col.natural, col.style = 4, 10, noteStyle
 	case "issuetype":
 		col.render = func(i *jira.Issue, _ time.Time) string { return i.Type }
-		col.min, col.natural = 4, 12
+		col.min, col.natural, col.style = 4, 12, kindStyle
 	case "project":
 		col.render = func(i *jira.Issue, _ time.Time) string { return i.Project }
 		col.min, col.natural = 4, 14
 	case "labels":
 		col.render = func(i *jira.Issue, _ time.Time) string { return strings.Join(i.Labels, ", ") }
-		col.min, col.natural = 6, 24
+		col.min, col.natural, col.style = 6, 24, noteStyle
 	case "updated":
 		col.render = func(i *jira.Issue, now time.Time) string { return age(i.Updated, now) }
-		col.min, col.natural = 3, 7
+		col.min, col.natural, col.style = 3, 7, noteStyle
 	case "created":
 		col.render = func(i *jira.Issue, now time.Time) string { return age(i.Created, now) }
-		col.min, col.natural = 3, 7
+		col.min, col.natural, col.style = 3, 7, noteStyle
 	default:
 		col.render = func(i *jira.Issue, _ time.Time) string { return renderRaw(i.Raw[id]) }
 		col.min, col.natural = 4, 20

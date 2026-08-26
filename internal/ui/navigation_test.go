@@ -14,12 +14,12 @@ func TestPinnedSessionStartsOnLiveFullWidthDetail(t *testing.T) {
 	client := &fakeClient{issues: []jira.Issue{issue}}
 	d := newPausedDriver(t, ui.Options{Client: client, Config: testConfig(t, nil), Pin: "ENG-1"})
 
-	if view := d.view(); !strings.Contains(view, "Loading") || strings.Contains(view, "│") || strings.Contains(view, "Summary") {
+	if view := d.view(); !strings.Contains(view, "Loading") || d.split() || strings.Contains(view, "Summary") {
 		t.Fatalf("pinned startup is not a full-width detail load:\n%s", view)
 	}
 	d.flush()
 
-	if view := d.view(); !strings.Contains(view, "Key: ENG-1") || strings.Contains(view, "│") {
+	if view := d.view(); !strings.Contains(view, "Key: ENG-1") || d.split() {
 		t.Errorf("pinned detail did not replace the full-width loader:\n%s", view)
 	}
 	if got := client.issueRequests(); len(got) != 1 || got[0] != "ENG-1" {
@@ -86,7 +86,8 @@ func TestGcAddressesCommentsFromListSplitZoomAndPin(t *testing.T) {
 	t.Run("zoomed detail", func(t *testing.T) {
 		d := newDriver(t, &fakeClient{issues: []jira.Issue{issue}, comments: map[string][]jira.Comment{"ENG-1": {comment}}}, testConfig(t, nil))
 		d.keys("enter", "ctrl+w", "o", "g", "c")
-		if first := strings.Split(d.view(), "\n")[0]; first != "Comments" {
+		// The first line inside the pane's frame, past the frame's own top edge.
+		if first := strings.TrimSpace(strings.Trim(strings.Split(d.view(), "\n")[1], "│")); first != "Comments" {
 			t.Errorf("gc did not put comments at the top of zoomed detail, first line %q:\n%s", first, d.view())
 		}
 	})
@@ -96,7 +97,8 @@ func TestGcAddressesCommentsFromListSplitZoomAndPin(t *testing.T) {
 		d := newPausedDriver(t, ui.Options{Client: client, Config: testConfig(t, nil), Pin: "ENG-1"})
 		d.flush()
 		d.keys("g", "c")
-		if first := strings.Split(d.view(), "\n")[0]; first != "Comments" {
+		// The first line inside the pane's frame, past the frame's own top edge.
+		if first := strings.TrimSpace(strings.Trim(strings.Split(d.view(), "\n")[1], "│")); first != "Comments" {
 			t.Errorf("gc did not put comments at the top of pinned detail, first line %q:\n%s", first, d.view())
 		}
 	})
@@ -117,7 +119,7 @@ func TestGlRevealsPinnedListWithoutRefetchingDetail(t *testing.T) {
 	d.flush()
 
 	d.keys("g", "l")
-	if view := d.view(); !strings.Contains(view, "│") || !strings.Contains(view, "Key: ENG-1") || !strings.Contains(view, "Summary") {
+	if view := d.view(); !d.split() || !strings.Contains(view, "Key: ENG-1") || !strings.Contains(view, "Summary") {
 		t.Errorf("gl did not reveal the list beside the pinned detail:\n%s", view)
 	}
 	if got := client.issueRequests(); len(got) != 1 {
@@ -152,23 +154,23 @@ func TestZoomTogglesTheFocusedPaneAndRestoresSplit(t *testing.T) {
 	}
 
 	d.keys("ctrl+w", "o")
-	if view := d.view(); strings.Contains(view, "│") || strings.Contains(view, "Summary") || !strings.Contains(view, "Key: ENG-1") {
+	if view := d.view(); d.split() || strings.Contains(view, "Summary") || !strings.Contains(view, "Key: ENG-1") {
 		t.Errorf("detail did not zoom full width:\n%s", view)
 	}
 	if !strings.Contains(d.view(), "This sentence fits at full width but has to wrap inside the narrower detail pane.") {
 		t.Errorf("zoom did not re-render detail at full width:\n%s", d.view())
 	}
 	d.keys("ctrl+w", "o")
-	if !strings.Contains(d.view(), "│") {
+	if !d.split() {
 		t.Errorf("repeated zoom did not restore the split:\n%s", d.view())
 	}
 
 	d.keys("g", "l", "ctrl+w", "o")
-	if view := d.view(); strings.Contains(view, "│") || strings.Contains(view, "Key: ENG-1") || !strings.Contains(view, "Summary") {
+	if view := d.view(); d.split() || strings.Contains(view, "Key: ENG-1") || !strings.Contains(view, "Summary") {
 		t.Errorf("list did not zoom full width:\n%s", view)
 	}
 	d.keys("ctrl+w", "o")
-	if !strings.Contains(d.view(), "│") {
+	if !d.split() {
 		t.Errorf("list zoom did not restore the split:\n%s", d.view())
 	}
 }
@@ -226,7 +228,7 @@ func TestClosingFocusedPaneLeavesTheOtherPane(t *testing.T) {
 	issue := detailedIssue()
 	d := newDriver(t, &fakeClient{issues: []jira.Issue{issue}}, testConfig(t, nil))
 	d.keys("enter", "g", "l", "q")
-	if view := d.view(); strings.Contains(view, "│") || strings.Contains(view, "Summary") || !strings.Contains(view, "Key: ENG-1") {
+	if view := d.view(); d.split() || strings.Contains(view, "Summary") || !strings.Contains(view, "Key: ENG-1") {
 		t.Errorf("closing the list did not leave detail full width:\n%s", view)
 	}
 
@@ -248,7 +250,7 @@ func TestClosingAZoomedPaneRestoresTheOtherPane(t *testing.T) {
 			d.keys("ctrl+w", "o", "q")
 
 			view := d.view()
-			if strings.Contains(view, "│") {
+			if d.split() {
 				t.Errorf("closing a zoomed pane restored a split:\n%s", view)
 			}
 			if focus == "detail" && !strings.Contains(view, "Summary") {

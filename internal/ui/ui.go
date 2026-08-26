@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -801,8 +802,9 @@ func (m *Model) applyPage(result *jira.SearchResult, first bool) {
 	m.list.clamp()
 }
 
-// rows is how many issues fit between the header and the status line.
-func (m *Model) rows() int { return max(m.height-2, 0) }
+// rows is how many issues fit between the column header and the status line,
+// inside the pane's frame.
+func (m *Model) rows() int { return max(m.height-2-frameWidth, 0) }
 
 func (m *Model) View() string {
 	if m.help.Visible() {
@@ -816,9 +818,9 @@ func (m *Model) View() string {
 	bodyRows := max(m.height-len(footer), 0)
 	var lines []string
 	if detailVisible {
-		lines = m.detail.view()
+		lines = boxed(m.detail.view(), m.width, bodyRows, m.detailTitle(), true)
 	} else {
-		lines = m.listPane(m.width, bodyRows)
+		lines = boxed(m.listPane(inner(m.width), inner(bodyRows)), m.width, bodyRows, listTitle, true)
 	}
 	for len(lines) < bodyRows {
 		lines = append(lines, "")
@@ -830,9 +832,20 @@ func (m *Model) View() string {
 }
 
 func (m *Model) paneWidths() (int, int) {
-	available := max(m.width-1, 0)
-	left := available * 45 / 100
-	return left, available - left
+	left := m.width * 45 / 100
+	return left, m.width - left
+}
+
+// listTitle names the list pane, as the reference TUI does. The detail pane is
+// named for the item in it, since that is what a user looking at two panes
+// needs to tell them apart.
+const listTitle = "Work Items"
+
+func (m *Model) detailTitle() string {
+	if m.detail.key != "" {
+		return m.detail.key
+	}
+	return "Detail"
 }
 
 func (m *Model) resizePanes() {
@@ -848,15 +861,16 @@ func (m *Model) resizePanes() {
 		// restoring the split never flashes stale wrapping.
 		_, width = m.paneWidths()
 	}
-	m.detail.resize(width, max(m.height-len(m.footer()), 0))
+	m.detail.resize(inner(width), inner(max(m.height-len(m.footer()), 0)))
 }
 
 func (m *Model) twoPaneView() string {
 	footer := m.footer()
 	bodyRows := max(m.height-len(footer), 0)
 	leftWidth, rightWidth := m.paneWidths()
-	left := m.listPane(leftWidth, bodyRows)
-	right := m.detail.view()
+	left := boxed(m.listPane(inner(leftWidth), inner(bodyRows)), leftWidth, bodyRows,
+		listTitle, m.focus == PaneList)
+	right := boxed(m.detail.view(), rightWidth, bodyRows, m.detailTitle(), m.focus == PaneDetail)
 
 	lines := make([]string, bodyRows)
 	for i := range bodyRows {
@@ -870,22 +884,21 @@ func (m *Model) twoPaneView() string {
 		if pad := leftWidth - ansi.StringWidth(l); pad > 0 {
 			l += strings.Repeat(" ", pad)
 		}
-		lines[i] = fitWidth(l, leftWidth) + "│" + fitWidth(r, rightWidth)
+		lines[i] = l + r
 	}
 	return strings.Join(append(lines, footer...), "\n")
 }
 
 func (m *Model) listPane(width, rows int) []string {
-	widths := layout(m.columns, m.list.issues, m.now(), max(width-gutterWidth, 0))
+	numWidth := numberWidth(len(m.list.issues))
+	widths := layout(m.columns, m.list.issues, m.now(), max(width-gutterWidth-numWidth, 0))
 	lines := make([]string, 0, rows)
 	if len(m.columns) > 0 && rows > 0 {
-		lines = append(lines, fitWidth(header(m.columns, widths), width))
+		lines = append(lines, fitWidth(header(m.columns, widths, numWidth), width))
 	}
 	switch {
 	case len(m.list.issues) > 0:
-		for _, line := range m.rowLines(widths) {
-			lines = append(lines, fitWidth(line, width))
-		}
+		lines = append(lines, m.rowLines(widths, numWidth, width)...)
 	case m.loading:
 		lines = append(lines, fitWidth("Loading…", width))
 	case m.status != nil:
@@ -921,22 +934,30 @@ func (m *Model) footer() []string {
 	return []string{line}
 }
 
-func (m *Model) rowLines(widths []int) []string {
+// rowLines draws the visible rows. The selected one is a solid band the width
+// of the pane, so it reads as selected even where it has no text; the others
+// are drawn cell by cell in their columns' own colours.
+func (m *Model) rowLines(widths []int, numWidth, width int) []string {
 	now := m.now()
 	visible := m.list.visible()
 	lines := make([]string, 0, len(visible))
 	for i, issue := range visible {
-		text := row(m.columns, widths, func(c int) string {
-			return m.columns[c].Render(issue, now)
-		})
-		base, match := plainStyle, matchStyle
-		if m.list.top+i == m.list.cursor {
-			text = SelectedMarker + text
-			base, match = selectedStyle, selectedMatchStyle
-		} else {
-			text = strings.Repeat(" ", gutterWidth) + text
+		index := m.list.top + i
+		cells := func(c int) string { return m.columns[c].Render(issue, now) }
+		number := numberCell(strconv.Itoa(index+1), numWidth)
+
+		if index == m.list.cursor {
+			text := SelectedMarker + number + row(m.columns, widths, cells)
+			text = fitWidth(text, width)
+			if pad := width - ansi.StringWidth(text); pad > 0 {
+				text += strings.Repeat(" ", pad)
+			}
+			lines = append(lines, highlight(text, m.search.pattern, selectedStyle, selectedMatchStyle))
+			continue
 		}
-		lines = append(lines, highlight(text, m.search.pattern, base, match))
+		text := strings.Repeat(" ", gutterWidth) + noteStyle.Render(number) +
+			styledRow(m.columns, widths, cells)
+		lines = append(lines, fitWidth(text, width))
 	}
 	return lines
 }

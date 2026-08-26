@@ -7,7 +7,7 @@
 default_query = "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC"
 
 # Only these fields are requested from the API. Adding a column fetches it.
-columns = ["key", "summary", "status", "assignee", "priority", "updated"]
+columns = ["key", "status", "issuetype", "summary", "assignee", "priority", "updated"]
 
 leader = " "
 # Editor command and optional flags. Resolution is this value, then $EDITOR,

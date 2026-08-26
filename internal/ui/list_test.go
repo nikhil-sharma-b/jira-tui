@@ -2,6 +2,7 @@ package ui_test
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -47,7 +48,7 @@ func newPausedDriver(t *testing.T, opts ui.Options) *driver {
 
 	d := &driver{t: t, model: m}
 	d.queue(m.Init())
-	d.send(tea.WindowSizeMsg{Width: 100, Height: 20})
+	d.send(tea.WindowSizeMsg{Width: 100, Height: 22})
 	return d
 }
 
@@ -181,13 +182,27 @@ func (d *driver) view() string { return ansi.Strip(d.model.View()) }
 
 func (d *driver) lines() []string { return strings.Split(d.view(), "\n") }
 
+// split reports that both panes are on screen, which now reads as two frames
+// side by side rather than as a single divider column.
+func (d *driver) split() bool {
+	return strings.Count(d.lines()[0], "╭") > 1
+}
+
 // selected is the key on the marked row, which is the observable form of "the
 // selection is here".
 func (d *driver) selected() string {
 	d.t.Helper()
 	for _, line := range d.lines() {
-		if strings.HasPrefix(line, ui.SelectedMarker) {
-			return strings.Fields(strings.TrimPrefix(line, ui.SelectedMarker))[0]
+		if i := strings.Index(line, ui.SelectedMarker); i >= 0 {
+			fields := strings.Fields(line[i+len(ui.SelectedMarker):])
+			// The row opens with its number, which is not what "the selection
+			// is here" means to a test.
+			if len(fields) > 1 {
+				if _, err := strconv.Atoi(fields[0]); err == nil {
+					fields = fields[1:]
+				}
+			}
+			return fields[0]
 		}
 	}
 	return ""
@@ -322,7 +337,7 @@ func TestUnknownColumnIsReportedAtStartup(t *testing.T) {
 	}
 	d := &driver{t: t, model: m}
 	d.queue(m.Init())
-	d.send(tea.WindowSizeMsg{Width: 100, Height: 20})
+	d.send(tea.WindowSizeMsg{Width: 100, Height: 22})
 	d.flush()
 
 	if m.Err() == nil {
@@ -447,7 +462,7 @@ func TestResizeRelaysOutWithinTheNewWidth(t *testing.T) {
 	d := listWith(t, 10)
 
 	for _, width := range []int{100, 60, 40, 24, 120} {
-		d.send(tea.WindowSizeMsg{Width: width, Height: 20})
+		d.send(tea.WindowSizeMsg{Width: width, Height: 22})
 		d.flush()
 		for _, line := range d.lines() {
 			if w := ansi.StringWidth(line); w > width {
@@ -462,7 +477,7 @@ func TestResizeRelaysOutWithinTheNewWidth(t *testing.T) {
 
 func TestNarrowTerminalKeepsTheLeftmostColumns(t *testing.T) {
 	d := listWith(t, 10)
-	d.send(tea.WindowSizeMsg{Width: 30, Height: 20})
+	d.send(tea.WindowSizeMsg{Width: 30, Height: 22})
 	d.flush()
 
 	view := d.view()
@@ -526,7 +541,7 @@ func TestLoadingIsVisibleWhileTheFirstPageIsInFlight(t *testing.T) {
 	}
 	d := &driver{t: t, model: m}
 	d.queue(m.Init())
-	d.send(tea.WindowSizeMsg{Width: 100, Height: 20})
+	d.send(tea.WindowSizeMsg{Width: 100, Height: 22})
 
 	if !strings.Contains(strings.ToLower(ansi.Strip(m.View())), "loading") {
 		t.Errorf("nothing said the list was loading:\n%s", ansi.Strip(m.View()))
@@ -623,7 +638,7 @@ func TestFailedFieldMetadataLeavesTheUIUsable(t *testing.T) {
 	}
 	d := &driver{t: t, model: m}
 	d.queue(m.Init())
-	d.send(tea.WindowSizeMsg{Width: 100, Height: 20})
+	d.send(tea.WindowSizeMsg{Width: 100, Height: 22})
 	d.flush()
 
 	if m.Err() != nil {
@@ -652,7 +667,7 @@ func TestReloadRetriesTheMetadataFetchThatFailed(t *testing.T) {
 	}
 	d := &driver{t: t, model: m}
 	d.queue(m.Init())
-	d.send(tea.WindowSizeMsg{Width: 100, Height: 20})
+	d.send(tea.WindowSizeMsg{Width: 100, Height: 22})
 	d.flush()
 
 	client.fieldsErr = nil
@@ -704,9 +719,9 @@ func TestScrollingDoesNotReflowTheColumns(t *testing.T) {
 	issues[35].Summary = strings.Repeat("a very long summary indeed ", 4)
 	d := newDriver(t, &fakeClient{issues: issues}, testConfig(t, nil))
 
-	before := d.lines()[0]
+	before := d.lines()[1]
 	d.keys("G")
-	if after := d.lines()[0]; after != before {
+	if after := d.lines()[1]; after != before {
 		t.Errorf("scrolling re-laid out the header:\n before %q\n after  %q", before, after)
 	}
 }
@@ -738,5 +753,45 @@ func TestAFailedPageIsNotRetriedByEveryMotion(t *testing.T) {
 	d.keys("R")
 	if n := len(client.requests()); n != 3 {
 		t.Errorf("reloading made %d searches in total, want a fresh attempt", n)
+	}
+}
+
+// Leftover width used to go entirely to the summary, so a list of short
+// summaries showed one column trailing half a screen of blank before the rest.
+// Slack is shared out instead, and no column runs away from the others.
+func TestSpareWidthIsSharedBetweenColumns(t *testing.T) {
+	issues := sampleIssues(1)
+	issues[0].Summary = "Test"
+	d := newDriver(t, &fakeClient{issues: issues}, testConfig(t, nil))
+	d.send(tea.WindowSizeMsg{Width: 160, Height: 22})
+
+	head := d.lines()[1]
+	summary := strings.Index(head, "Summary")
+	status := strings.Index(head, "Status")
+	if summary < 0 || status < 0 {
+		t.Fatalf("the header is missing columns: %q", head)
+	}
+	if gap := status - summary; gap > 40 {
+		t.Errorf("the summary column is %d wide, want it in line with the others:\n%q", gap, head)
+	}
+}
+
+// One issue with a paragraph for a summary must not stretch its column across
+// the pane: the cap is a share of the terminal, so the other columns keep
+// their place whatever a single row happens to contain.
+func TestALongSummaryDoesNotEatTheRow(t *testing.T) {
+	issues := sampleIssues(2)
+	issues[0].Summary = strings.Repeat("a very lengthy text description ", 12)
+	issues[1].Summary = "Test"
+	d := newDriver(t, &fakeClient{issues: issues}, testConfig(t, nil))
+	d.send(tea.WindowSizeMsg{Width: 160, Height: 22})
+
+	head := d.lines()[1]
+	summary, status := strings.Index(head, "Summary"), strings.Index(head, "Status")
+	if summary < 0 || status < 0 {
+		t.Fatalf("the header is missing columns: %q", head)
+	}
+	if width := status - summary; width > 160/4 {
+		t.Errorf("the summary column is %d wide, want no more than an equal share:\n%q", width, head)
 	}
 }

@@ -263,6 +263,10 @@ func TestTheNewAssigneeIsVisibleInTheListRow(t *testing.T) {
 func assignedRow(t *testing.T, d *driver, key string) string {
 	t.Helper()
 	for _, line := range d.lines() {
+		// The pane's frame carries the key in its title, which is not a row.
+		if strings.HasPrefix(line, "╭") || strings.Contains(line, "╮") {
+			continue
+		}
 		if strings.Contains(line, key) {
 			return line
 		}
@@ -290,7 +294,7 @@ func TestAssigningRefetchesTheItemLiveForTheDetailPane(t *testing.T) {
 	// cached search, and the live read is what corrects it. The screen is
 	// widened first, because a 45-column list pane has no room to draw the
 	// assignee column at all.
-	d.send(tea.WindowSizeMsg{Width: 200, Height: 20})
+	d.send(tea.WindowSizeMsg{Width: 300, Height: 22})
 	row := assignedRow(t, d, "ENG-1")
 	if !strings.Contains(row, "Grace Hopper") {
 		t.Errorf("the ENG-1 row still disagrees with the pane beside it: %q", row)
