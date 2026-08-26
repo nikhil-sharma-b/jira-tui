@@ -50,7 +50,7 @@ func TestOpeningTheSameIssueTwiceFetchesItTwice(t *testing.T) {
 
 func TestCommentsRenderAfterDescriptionWithMetadataAndADF(t *testing.T) {
 	issue := detailedIssue()
-	created := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+	created := time.Date(2026, 8, 8, 10, 0, 0, 0, time.UTC)
 	client := &fakeClient{
 		issues: []jira.Issue{issue},
 		comments: map[string][]jira.Comment{"ENG-1": {
@@ -72,8 +72,8 @@ func TestCommentsRenderAfterDescriptionWithMetadataAndADF(t *testing.T) {
 
 	view := d.view()
 	for _, want := range []string{
-		"Comments", "Ada Lovelace", "2026-08-20 10:00 UTC", "• Replace the relay",
-		"Edited: 2026-08-20 12:00 UTC", "Unknown author", "Second comment",
+		"Comments", "Ada Lovelace", "Aug 8, 2026 10:00 UTC", "• Replace the relay",
+		"Edited: Aug 8, 2026 12:00 UTC", "Unknown author", "Second comment",
 	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("comments do not show %q:\n%s", want, view)
@@ -331,7 +331,7 @@ func TestEnterOpensLiveDetailBesideTheList(t *testing.T) {
 	for _, want := range []string{
 		"ENG-1", "In Progress", "Ada Lovelace",
 		"Grace Hopper", "Highest", "Bug", "time-travel, urgent",
-		"2026-08-20 09:30 UTC", "2026-08-25 11:45 UTC",
+		"Aug 20, 2026 09:30 UTC", "Aug 25, 2026 11:45 UTC",
 	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("detail does not show %q:\n%s", want, view)
@@ -535,7 +535,7 @@ func TestBracketsCycleTabsAndEachTabShowsOnlyItsOwnContent(t *testing.T) {
 		{name: "Info", want: []string{"Repair the flux capacitor", "Diagnosis"}, avoid: []string{"Reporter:", "trace.log"}},
 		{name: "Details", keys: []string{"]"}, want: []string{"Key: ENG-1", "Reporter: Grace Hopper", "Labels: time-travel, urgent"}, avoid: []string{"Diagnosis"}},
 		{name: "Comments", keys: []string{"]"}, want: []string{"No comments."}, avoid: []string{"Diagnosis", "trace.log"}},
-		{name: "Attachments", keys: []string{"]"}, want: []string{"trace.log", "20.0 kB", "text/plain", "Ada Lovelace"}, avoid: []string{"Diagnosis"}},
+		{name: "Attachments", keys: []string{"]"}, want: []string{"trace.log", "20.0 kB", "text/plain", "Ada Lovelace", "2026-08-20 09:30 UTC"}, avoid: []string{"Diagnosis"}},
 		{name: "Links", keys: []string{"]"}, want: []string{"is blocked by", "ENG-9", "Source a replacement relay", "To Do"}, avoid: []string{"Order the capacitor"}},
 		{name: "Subtasks", keys: []string{"]"}, want: []string{"ENG-4", "Order the capacitor", "Done"}, avoid: []string{"Source a replacement relay"}},
 	}

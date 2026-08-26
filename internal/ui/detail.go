@@ -266,8 +266,8 @@ func (d *detailPane) renderDetails() []string {
 		{"Priority", priorityName(i.Priority)},
 		{"Type", valueOr(i.Type, "None")},
 		{"Labels", labels(i.Labels)},
-		{"Created", detailTime(i.Created)},
-		{"Updated", detailTime(i.Updated)},
+		{"Created", ticketTimestamp(i.Created)},
+		{"Updated", ticketTimestamp(i.Updated)},
 	}
 	var lines []string
 	for _, field := range fields {
@@ -306,7 +306,7 @@ func (d *detailPane) renderAttachments() []string {
 		}
 		lines = append(lines, wrapDetailLine(itemKeyStyle.Render(attachment.Filename), d.width)...)
 		meta := attachmentSize(attachment.Size) + " · " + valueOr(attachment.MimeType, "unknown type") +
-			" · " + userName(attachment.Author, "Unknown author") + " · " + detailTime(attachment.Created)
+			" · " + userName(attachment.Author, "Unknown author") + " · " + attachmentTimestamp(attachment.Created)
 		lines = append(lines, wrapDetailLine(noteStyle.Render(meta), d.width)...)
 	}
 	return lines
@@ -364,9 +364,9 @@ func attachmentSize(size int64) string {
 }
 
 func renderComment(comment jira.Comment, width int) []string {
-	lines := wrapDetailLine(commentAuthorStyle.Render(userName(comment.Author, "Unknown author"))+" · "+detailTime(comment.Created), width)
+	lines := wrapDetailLine(commentAuthorStyle.Render(userName(comment.Author, "Unknown author"))+" · "+ticketTimestamp(comment.Created), width)
 	if comment.Updated.Sub(comment.Created) >= time.Second {
-		lines = append(lines, wrapDetailLine("Edited: "+detailTime(comment.Updated), width)...)
+		lines = append(lines, wrapDetailLine("Edited: "+ticketTimestamp(comment.Updated), width)...)
 	}
 	switch {
 	case comment.Body.IsEmpty():
@@ -562,11 +562,19 @@ func labels(values []string) string {
 	return strings.Join(values, ", ")
 }
 
-func detailTime(t time.Time) string {
+func attachmentTimestamp(t time.Time) string {
+	return formatTimestamp(t, "2006-01-02 15:04 MST")
+}
+
+func ticketTimestamp(t time.Time) string {
+	return formatTimestamp(t, "Jan 2, 2006 15:04 MST")
+}
+
+func formatTimestamp(t time.Time, layout string) string {
 	if t.IsZero() {
 		return "Unknown"
 	}
-	return t.Format("2006-01-02 15:04 MST")
+	return t.Format(layout)
 }
 
 // sectionHeader marks a section of the detail pane the way jiratui marks one:
