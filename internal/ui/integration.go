@@ -12,9 +12,11 @@ import (
 )
 
 type integrationMsg struct {
-	verb string
-	key  string
-	err  error
+	verb       string
+	key        string
+	success    string
+	generation uint64
+	err        error
 }
 
 func (m *Model) copyFocused(url bool) tea.Cmd {
@@ -28,8 +30,16 @@ func (m *Model) copyFocused(url bool) tea.Cmd {
 		text = m.client.BrowseURL(key)
 	}
 	copyText := m.copyText
+	generation := m.noticeGeneration
+	success := fmt.Sprintf("yanked key for %s", key)
+	if url {
+		success = fmt.Sprintf("yanked URL for %s", key)
+	}
 	return func() tea.Msg {
-		return integrationMsg{verb: "copy", key: key, err: copyText(text)}
+		return integrationMsg{
+			verb: "copy", key: key, success: success, generation: generation,
+			err: copyText(text),
+		}
 	}
 }
 
@@ -48,9 +58,13 @@ func (m *Model) openFocusedInBrowser() tea.Cmd {
 
 func (m *Model) handleIntegration(msg integrationMsg) tea.Cmd {
 	if msg.err != nil {
+		m.notice = ""
 		m.status = fmt.Errorf("%s %s: %w", msg.verb, msg.key, msg.err)
 	} else {
 		m.status = nil
+		if msg.generation == m.noticeGeneration {
+			m.notice = msg.success
+		}
 	}
 	return nil
 }

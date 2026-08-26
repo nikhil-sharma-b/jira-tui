@@ -177,6 +177,10 @@ type Model struct {
 	// status is the last failure, shown in the status line rather than in a
 	// modal so the list underneath stays readable and usable.
 	status error
+	// notice is feedback from the last successful action. The next keypress
+	// clears it so confirmations do not displace the normal status forever.
+	notice           string
+	noticeGeneration uint64
 	// err is a failure that startup cannot continue past -- today, only a
 	// configured column that names no field on this site. It is returned from
 	// Run so the message lands on stderr after the terminal is restored.
@@ -437,6 +441,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 	if msg.Type == tea.KeyCtrlC {
 		return tea.Quit
 	}
+	m.notice = ""
+	m.noticeGeneration++
 	key := msg.String()
 	// Terminals encode Ctrl-i as Tab. In normal mode the configured vim
 	// binding wins; in text modes the same byte remains a completion key.
@@ -992,12 +998,15 @@ func (m *Model) rowLines(widths []int, numWidth, width int) []string {
 	return lines
 }
 
-// statusLine reports the failure if there was one, and otherwise where the
+// statusLine reports action feedback if there is any, and otherwise where the
 // selection is and what query put it there. Errors live here rather than in a
 // modal: a modal has to be dismissed before the list can be looked at again.
 func (m *Model) statusLine() string {
 	if m.status != nil {
 		return errorStyle.Render(m.fit(m.withOfflineMarker(m.status.Error())))
+	}
+	if m.notice != "" {
+		return statusStyle.Render(m.fit(m.withOfflineMarker(m.notice)))
 	}
 	var b strings.Builder
 	if n := len(m.list.issues); n > 0 {
