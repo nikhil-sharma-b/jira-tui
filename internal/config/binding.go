@@ -126,15 +126,15 @@ func Compile(km Keymap, leader string) (*Bindings, error) {
 		tokens, err := tokenize(km[a], leaderTokens)
 		if err != nil {
 			if err == errNoLeader {
-				return nil, &Error{Key: "leader", Msg: fmt.Sprintf("unset, but keys.%s uses %s", a, leaderRef)}
+				return nil, &Error{Key: "leader", Msg: fmt.Sprintf("unset, but %s uses %s", configKey(a), leaderRef)}
 			}
-			return nil, &Error{Key: "keys." + string(a), Msg: err.Error()}
+			return nil, &Error{Key: configKey(a), Msg: err.Error()}
 		}
 		if len(tokens) == 0 {
 			continue
 		}
 		if reason := reserved(tokens, a); reason != "" {
-			return nil, &Error{Key: "keys." + string(a), Msg: reason}
+			return nil, &Error{Key: configKey(a), Msg: reason}
 		}
 		key := strings.Join(tokens, tokenSep)
 
@@ -175,9 +175,28 @@ func reserved(tokens []string, a Action) string {
 // which of the two they meant to rebind.
 func collision(a, other Action, binding, relation string) error {
 	return &Error{
-		Key: "keys." + string(a),
-		Msg: fmt.Sprintf("%q %s %q", binding, relation, string(other)),
+		Key: configKey(a),
+		Msg: fmt.Sprintf("%q %s %q", binding, relation, collisionLabel(other)),
 	}
+}
+
+// configKey is the config key a binding was written under, so an error names
+// the line the user must edit rather than the action it compiled to.
+func configKey(a Action) string {
+	if name, ok := a.TransitionName(); ok {
+		return "transitions." + name
+	}
+	return "keys." + string(a)
+}
+
+// collisionLabel spells the action a binding collided with, the way the other
+// end of a collision reads best: an action by its name, a direct transition by
+// the transition it applies.
+func collisionLabel(a Action) string {
+	if name, ok := a.TransitionName(); ok {
+		return "the " + name + " transition"
+	}
+	return string(a)
 }
 
 func sortedActions(km Keymap) []Action {

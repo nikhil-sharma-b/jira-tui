@@ -43,6 +43,29 @@ type list struct {
 	rows int
 }
 
+// refresh puts a live reading of one work item into the row that shows it, so
+// a status the user just changed is not left saying what a cached search said
+// a minute ago. Only the fields a live read asked for are replaced: the row may
+// display columns the detail fetch never requested, and overwriting those with
+// zero values would blank them.
+func (l *list) refresh(issue *jira.Issue) {
+	if issue == nil {
+		return
+	}
+	for _, row := range l.issues {
+		if row.Key != issue.Key {
+			continue
+		}
+		row.Summary = issue.Summary
+		row.Status = issue.Status
+		row.Assignee = issue.Assignee
+		row.Priority = issue.Priority
+		row.Labels = issue.Labels
+		row.Updated = issue.Updated
+		return
+	}
+}
+
 // visible returns the slice currently drawn.
 func (l *list) visible() []*jira.Issue {
 	if len(l.issues) == 0 || l.rows <= 0 {

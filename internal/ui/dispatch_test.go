@@ -238,16 +238,18 @@ func TestEscIsNeverConsumedByABinding(t *testing.T) {
 }
 
 func TestRebindingNormalModeStillLeavesTheMode(t *testing.T) {
-	// A text-entry mode is deliberately not exitable this way: there, every
-	// key but Esc is literal input.
+	// A mode whose keys belong to a widget -- the commandline, search, a
+	// picker -- is deliberately not exitable this way: there, every key but Esc
+	// is input for the widget. In normal mode a rebound key means what Esc
+	// means, count and all.
 	d := dispatcher(t, " ", map[string]string{
 		string(config.ActionNormalMode): "z",
 	})
-	feed(d, " ", "t")
-	if got := d.Mode(); got != ui.ModePicker {
-		t.Fatalf("mode = %v, want ModePicker", got)
-	}
+	feed(d, "5")
 	assertAction(t, d.Dispatch("z"), config.ActionNormalMode, 0)
+	if got := d.Count(); got != 0 {
+		t.Errorf("Count() = %d after returning to normal mode, want 0", got)
+	}
 	if got := d.Mode(); got != ui.ModeNormal {
 		t.Errorf("mode = %v, want ModeNormal", got)
 	}
@@ -311,12 +313,24 @@ func TestKeysInTextModeAreLiteralText(t *testing.T) {
 	}
 }
 
-func TestPickerModeStillDispatchesNavigation(t *testing.T) {
+func TestPickerModeSendsKeysToThePicker(t *testing.T) {
+	// A picker filters as it is typed, so its keys belong to it rather than to
+	// the binding table: a bare "j" narrows the choices instead of moving the
+	// list underneath, which is not the pane being chosen from.
 	d := dispatcher(t, " ", nil)
 	feed(d, " ", "t")
 
-	assertAction(t, d.Dispatch("j"), config.ActionDown, 0)
-	assertAction(t, d.Dispatch("enter"), config.ActionOpen, 0)
+	for _, k := range []string{"j", "q", "enter"} {
+		r := d.Dispatch(k)
+		if r.Kind != ui.ResultText || r.Key != k {
+			t.Errorf("%q in picker mode = %v %q, want it typed into the picker", k, r.Kind, r.Key)
+		}
+	}
+	// Esc still resolves ahead of every mode, so a picker cannot trap anyone.
+	assertAction(t, d.Dispatch("esc"), config.ActionNormalMode, 0)
+	if got := d.Mode(); got != ui.ModeNormal {
+		t.Errorf("mode = %v, want ModeNormal", got)
+	}
 }
 
 func TestKeyAliasesNormalizeBeforeLookup(t *testing.T) {

@@ -1,5 +1,7 @@
 package config
 
+import "strings"
+
 // Action names an operation the UI can perform. Bindings map key sequences to
 // these, so config refers to intent rather than to internals.
 type Action string
@@ -55,6 +57,22 @@ const (
 	ActionYankURL     Action = "yank_url"
 	ActionOpenBrowser Action = "open_browser"
 )
+
+// transitionPrefix marks an action that applies one named workflow transition
+// directly, without opening the picker. The name travels inside the action
+// because it is not knowable at compile time whether the site has such a
+// transition -- and whether it is available depends on the item and the moment,
+// so it can only be resolved live at the keypress.
+const transitionPrefix = "transition:"
+
+// TransitionAction names the action that applies the named transition.
+func TransitionAction(name string) Action { return Action(transitionPrefix + name) }
+
+// TransitionName reports the transition an action applies directly, and false
+// for every fixed action.
+func (a Action) TransitionName() (string, bool) {
+	return strings.CutPrefix(string(a), transitionPrefix)
+}
 
 // Keymap binds key sequences to actions.
 type Keymap map[Action]string

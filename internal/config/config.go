@@ -54,6 +54,14 @@ type Config struct {
 	// set to the empty string unbinds that action.
 	Keys map[string]string `toml:"keys"`
 
+	// Transitions binds a named workflow transition to a key directly, so the
+	// status change done every day is one chord rather than a picker. It is a
+	// table of its own rather than more entries in Keys, so that Keys can keep
+	// refusing an action it does not know: a misspelled action is a typo, while
+	// a transition name is only checkable against the site, live, at the
+	// keypress.
+	Transitions map[string]string `toml:"transitions"`
+
 	// Leader prefixes every action binding. Single letters stay reserved for
 	// navigation.
 	Leader string `toml:"leader"`
@@ -271,6 +279,16 @@ func (c *Config) validate() error {
 			return &Error{Key: "keys." + name, Msg: "unknown action"}
 		}
 	}
+	for name, binding := range c.Transitions {
+		// An unbound transition is not an unbinding: nothing was bound to it in
+		// the first place, so an empty value is a line the user meant to finish.
+		if strings.TrimSpace(binding) == "" {
+			return &Error{Key: "transitions." + name, Msg: "must name a key, e.g. \"<leader>td\""}
+		}
+		if strings.TrimSpace(name) == "" {
+			return &Error{Key: "transitions", Msg: "must name a transition, e.g. \"In Progress\""}
+		}
+	}
 	// Compiling here means a binding that could never fire is a startup
 	// error naming both actions, rather than a key that silently does
 	// nothing until someone notices.
@@ -283,8 +301,17 @@ func (c *Config) validate() error {
 	return nil
 }
 
-// Keymap is the effective keymap: user bindings merged over the defaults.
-func (c *Config) Keymap() Keymap { return DefaultKeymap().Merge(c.Keys) }
+// Keymap is the effective keymap: user bindings merged over the defaults, plus
+// the direct transition bindings. They compile together because a key can only
+// mean one thing, and a transition bound over an action is a collision the user
+// wants told about at load.
+func (c *Config) Keymap() Keymap {
+	km := DefaultKeymap().Merge(c.Keys)
+	for name, binding := range c.Transitions {
+		km[TransitionAction(name)] = binding
+	}
+	return km
+}
 
 // Bindings is the compiled effective keymap, which dispatch reads. A config
 // that was built rather than loaded compiles on first use.

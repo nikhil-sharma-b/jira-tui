@@ -40,3 +40,16 @@ request = "15s"
 # See ? in the app for the bindings actually in effect.
 [keys]
 # transition = "<leader>t"
+
+# Bind a named workflow transition to a key, applying it without opening the
+# picker. The name is resolved live at the keypress, against the transitions
+# the focused item actually offers, so a binding never applies a stale id --
+# and it reports what is available when the named one is not.
+#
+# These are their own table rather than more [keys] entries because [keys] is a
+# closed set of actions jt knows, while a transition name is only checkable
+# against your site. They compile together, so binding one over an existing key
+# is refused at startup.
+[transitions]
+# "In Progress" = "<leader>ms"
+# "Done"        = "<leader>md"

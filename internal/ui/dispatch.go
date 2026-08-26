@@ -224,8 +224,13 @@ func (d *Dispatcher) addCountDigit(key string) {
 // keyEsc is the normalized spelling of Escape.
 var keyEsc = config.NormalizeKey("esc")
 
-// isText reports whether a mode is one where keys are literal input.
-func (m Mode) isText() bool { return m == ModeCommand || m == ModeSearch }
+// isText reports whether a mode is one where keys belong to the widget on
+// screen rather than to the binding table. A picker is included: its filter is
+// typed, and a bare "d" while one is open must narrow the choices rather than
+// fire whatever "d" is bound to underneath.
+func (m Mode) isText() bool {
+	return m == ModeCommand || m == ModeSearch || m == ModePicker
+}
 
 func (m Mode) String() string {
 	switch m {

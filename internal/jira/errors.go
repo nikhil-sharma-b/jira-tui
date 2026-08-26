@@ -2,6 +2,8 @@ package jira
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -43,14 +45,18 @@ type FieldsRequiredError struct {
 }
 
 func (e *FieldsRequiredError) Error() string {
-	return fmt.Sprintf("transition %s requires fields: %v", e.TransitionID, keys(e.Fields))
+	return fmt.Sprintf("transition %s requires fields: %s", e.TransitionID, strings.Join(e.FieldNames(), ", "))
 }
 
-func keys(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
+// FieldNames are the rejected fields, sorted. Order is part of the message a
+// user reads back from a failed write, and map order would make the same
+// rejection read differently each time.
+func (e *FieldsRequiredError) FieldNames() []string {
+	out := make([]string, 0, len(e.Fields))
+	for k := range e.Fields {
 		out = append(out, k)
 	}
+	sort.Strings(out)
 	return out
 }
 

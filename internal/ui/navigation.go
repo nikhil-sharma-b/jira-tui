@@ -46,6 +46,21 @@ func (m *Model) visiblePanes() (list, detail bool) {
 	return false, m.detailVisible && m.detail.open
 }
 
+// focusedKey is the work item every action on "this item" means: the one
+// detail is showing when focus is there -- in a split, zoomed, or a pinned
+// session, which are all the same thing to it -- and otherwise the selected
+// row. It lives here rather than beside any one action, because writing,
+// transitioning and yanking all have to agree on what is in front of the user.
+func (m *Model) focusedKey() string {
+	if m.focus == PaneDetail && m.detail.open {
+		return m.detail.key
+	}
+	if m.list.cursor >= 0 && m.list.cursor < len(m.list.issues) {
+		return m.list.issues[m.list.cursor].Key
+	}
+	return ""
+}
+
 func (m *Model) openKey(key string, recordVisit bool) tea.Cmd {
 	if recordVisit {
 		m.jumps.visit(key)

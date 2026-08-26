@@ -434,8 +434,47 @@ func (w commentWire) comment() (Comment, error) {
 	return comment, nil
 }
 
+// Transitions lists the moves available on one work item right now. It is a
+// live read every time: availability depends on the item's current status and
+// on the caller's permissions, so anything cached would be quietly wrong on
+// exactly the item being worked on.
 func (c *REST) Transitions(ctx context.Context, key string) ([]Transition, error) {
-	panic("not implemented")
+	var page struct {
+		Transitions []transitionWire `json:"transitions"`
+	}
+	if err := c.get(ctx, "transitions", apiRead, transitionsPath(key), nil, &page); err != nil {
+		return nil, err
+	}
+	transitions := make([]Transition, 0, len(page.Transitions))
+	for _, wire := range page.Transitions {
+		transitions = append(transitions, wire.transition())
+	}
+	return transitions, nil
+}
+
+// transitionsPath is the resource both directions share: listing what is
+// available and applying one differ only in the REST version they go to.
+func transitionsPath(key string) string {
+	return "/issue/" + url.PathEscape(key) + "/transitions"
+}
+
+// transitionWire is one entry of the v3 transitions response. The destination
+// status is kept because two transitions can be named alike and differ only in
+// where they land.
+type transitionWire struct {
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	To        statusWire `json:"to"`
+	HasScreen bool       `json:"hasScreen"`
+}
+
+func (w transitionWire) transition() Transition {
+	return Transition{
+		ID:        w.ID,
+		Name:      w.Name,
+		To:        Status{ID: w.To.ID, Name: w.To.Name, Category: w.To.Category.Key},
+		HasScreen: w.HasScreen,
+	}
 }
 
 func (c *REST) AddComment(ctx context.Context, key, body string) (*Comment, error) {
@@ -463,8 +502,28 @@ func (c *REST) SetDescription(ctx context.Context, key, body string) error {
 	return c.put(ctx, "set description", apiWrite, "/issue/"+url.PathEscape(key), payload, nil)
 }
 
+// Transition applies a workflow move. Like every write it goes to v2 and is
+// never retried, whatever the status code: a double transition is a worse
+// outcome than an error message.
 func (c *REST) Transition(ctx context.Context, key, transitionID string) error {
-	panic("not implemented")
+	payload := struct {
+		Transition struct {
+			ID string `json:"id"`
+		} `json:"transition"`
+	}{}
+	payload.Transition.ID = transitionID
+	err := c.post(ctx, "transition", apiWrite, transitionsPath(key), payload, nil)
+	if err == nil {
+		return nil
+	}
+	// A transition screen demanding fields rejects the write with a per-field
+	// map. Collecting those fields is out of scope, so the failure is retyped
+	// into the one the UI can name precisely.
+	var e *Error
+	if errors.As(err, &e) && e.StatusCode == http.StatusBadRequest && len(e.Fields) > 0 {
+		return &FieldsRequiredError{TransitionID: transitionID, Fields: e.Fields}
+	}
+	return err
 }
 
 func (c *REST) Assign(ctx context.Context, key, accountID string) error {

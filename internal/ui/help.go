@@ -108,10 +108,11 @@ const helpIndent = "  "
 // Lines renders the overlay, one line per binding under its category heading.
 // A count prefix is documented once rather than on every motion.
 func (h *Help) Lines() []string {
-	width := h.keyColumnWidth()
+	categories := h.categories()
+	width := keyColumnWidth(h.bindings, categories)
 
 	var lines []string
-	for _, c := range helpCategories {
+	for _, c := range categories {
 		rendered := h.categoryLines(c, width)
 		if len(rendered) == 0 {
 			continue
@@ -128,6 +129,29 @@ func (h *Help) Lines() []string {
 	return lines
 }
 
+// categories is everything the overlay documents: the fixed groups and then
+// the user's own transition bindings. It is built once per render and passed
+// on, so that what is measured for alignment cannot drift from what is drawn --
+// and so the package-level list is never appended to in place.
+func (h *Help) categories() []category {
+	out := make([]category, 0, len(helpCategories)+1)
+	out = append(out, helpCategories...)
+	return append(out, h.transitionCategory())
+}
+
+// transitionCategory documents the transitions bound straight to keys. They
+// are not a hand-maintained list because they are the user's own: the names
+// come from config, through the compiled bindings, like every other key here.
+func (h *Help) transitionCategory() category {
+	c := category{name: "TRANSITIONS"}
+	for _, a := range h.bindings.Actions() {
+		if name, ok := a.TransitionName(); ok {
+			c.entries = append(c.entries, entry{action: a, what: "transition to " + name})
+		}
+	}
+	return c
+}
+
 func (h *Help) categoryLines(c category, width int) []string {
 	var lines []string
 	for _, e := range c.entries {
@@ -141,13 +165,15 @@ func (h *Help) categoryLines(c category, width int) []string {
 	return lines
 }
 
-// keyColumnWidth aligns descriptions across every category, so the overlay
-// reads as one table rather than four.
-func (h *Help) keyColumnWidth() int {
+// keyColumnWidth aligns descriptions across every category it is given, so the
+// overlay reads as one table rather than several. It measures the categories
+// being drawn rather than the fixed list, since a bound transition name can be
+// wider than anything built in.
+func keyColumnWidth(bindings *config.Bindings, categories []category) int {
 	width := 0
-	for _, c := range helpCategories {
+	for _, c := range categories {
 		for _, e := range c.entries {
-			keys, ok := h.bindings.Display(e.action)
+			keys, ok := bindings.Display(e.action)
 			if !ok {
 				continue
 			}

@@ -59,16 +59,6 @@ type writeDoneMsg struct {
 	err       error
 }
 
-func (m *Model) focusedKey() string {
-	if m.focus == PaneDetail && m.detail.open {
-		return m.detail.key
-	}
-	if m.list.cursor >= 0 && m.list.cursor < len(m.list.issues) {
-		return m.list.issues[m.list.cursor].Key
-	}
-	return ""
-}
-
 func (m *Model) beginWrite(kind writeKind) tea.Cmd {
 	key := m.focusedKey()
 	if key == "" {

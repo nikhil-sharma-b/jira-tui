@@ -42,6 +42,17 @@ you have such a site.
 It covers the ADF body, Jira timestamp format, and an inactive author without
 capturing discussion from a real work item.
 
+`transitions.200` is written to Atlassian's documented v3 transitions response
+rather than captured: what a real site offers depends on its workflow and on
+the capturing account's permissions, so a recording would encode one site's
+workflow as though it were the shape. It covers the destination status, its
+category, and a transition that presents a screen.
+
+`transitionfields.400` is the rejection a transition screen produces when it
+demands fields jt does not collect: the per-field `errors` object, which is
+what turns into a `FieldsRequiredError`. It is likewise written to the
+documented shape, since provoking one needs a workflow configured for it.
+
 To capture more, add a case to `tools/capturefixtures` and run it against your
 own site:
 

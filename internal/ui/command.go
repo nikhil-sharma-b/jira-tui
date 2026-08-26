@@ -26,6 +26,12 @@ type command struct {
 	// completeArg offers the arguments this command takes, nil when it takes
 	// none worth guessing at.
 	completeArg func(m *Model, partial string) []string
+	// liveArgs fetches the candidates completeArg needs when they can only be
+	// known by asking Jira, nil for a command whose arguments are known from
+	// config. Completion is synchronous; this is how a command says that its
+	// candidates are not, so that the model can fetch and complete afterwards
+	// rather than quietly completing over something remembered.
+	liveArgs func(m *Model) tea.Cmd
 }
 
 // commands is the whole vocabulary. Ticket 07 names these four; the rest of
@@ -34,6 +40,7 @@ var commands = []command{
 	{name: "q", run: func(m *Model, _ string) tea.Cmd { return m.closePane() }},
 	{name: "qa", run: func(m *Model, _ string) tea.Cmd { return tea.Quit }},
 	{name: "jql", run: runJQL, completeArg: completeSavedQueries},
+	{name: "transition", run: runTransition, completeArg: completeTransitions, liveArgs: liveTransitions},
 	{name: "cache", run: runCache, completeArg: func(_ *Model, partial string) []string {
 		if !strings.HasPrefix("clear", partial) {
 			return nil
@@ -95,6 +102,42 @@ func runJQL(m *Model, arg string) tea.Cmd {
 	return m.runQuery(query)
 }
 
+// runTransition moves the focused work item by name. The name is resolved
+// against a live fetch when the line is submitted, never against whatever
+// completion last saw: between typing a name and pressing Enter the item may
+// have moved, and applying a stale id is exactly the wrong answer.
+func runTransition(m *Model, arg string) tea.Cmd {
+	if arg == "" {
+		m.status = errors.New("transition: needs a name; <leader>t lists what is available")
+		return nil
+	}
+	return m.beginNamedTransition(arg)
+}
+
+// completeTransitions offers the live names the model has just fetched for
+// this keystroke. They are gone again by the next one.
+func completeTransitions(m *Model, partial string) []string {
+	var out []string
+	for _, name := range m.transitionNames {
+		if strings.HasPrefix(strings.ToLower(name), strings.ToLower(partial)) {
+			out = append(out, name)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// liveTransitions fetches the names :transition completes over. There is
+// nothing to complete without a focused work item, since what is available is
+// a property of one item at one moment.
+func liveTransitions(m *Model) tea.Cmd {
+	key := m.focusedKey()
+	if key == "" {
+		return nil
+	}
+	return m.fetchTransitions(key, intentComplete, "")
+}
+
 // runCache is :cache clear and nothing else, so that a mistyped subcommand is
 // reported rather than silently taken for the one operation there is.
 func runCache(m *Model, arg string) tea.Cmd {
@@ -139,6 +182,22 @@ func (m *Model) completeCommandLine(line string) []string {
 		out = append(out, name+" "+candidate)
 	}
 	return out
+}
+
+// liveCompletion reports the fetch a Tab needs before the line can be
+// completed at all, nil when the candidates are already knowable. It is asked
+// before the keypress reaches the widget, so that completion itself stays the
+// synchronous thing it reads as.
+func (m *Model) liveCompletion(line string) tea.Cmd {
+	name, _, hasArg := strings.Cut(line, " ")
+	if !hasArg {
+		return nil
+	}
+	c, ok := lookupCommand(name)
+	if !ok || c.liveArgs == nil {
+		return nil
+	}
+	return c.liveArgs(m)
 }
 
 // completeNames offers the command names starting with what has been typed,

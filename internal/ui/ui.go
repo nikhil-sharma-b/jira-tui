@@ -108,6 +108,21 @@ type Model struct {
 	// are loaded.
 	search paneSearch
 
+	// picker is the choice on screen while one is being made, nil otherwise.
+	// Like prompt it is paired with the dispatcher's modal state, and
+	// beginTransitionPicker and closePicker are the only two places that
+	// pairing is made or broken.
+	picker *picker
+	// transitionRequest orders every transition fetch and write, so a response
+	// that outlived its question -- the picker closed, the focus moved, another
+	// transition started -- is recognised and dropped.
+	transitionRequest uint64
+	// transitionNames are the live names a single completion keystroke is
+	// completing over. They are set when the fetch lands and cleared in the
+	// same call: transitions are never cached, and a completion offering a name
+	// from a minute ago would be the same lie a cache would tell.
+	transitionNames []string
+
 	width, height int
 
 	// loading counts nothing more than "a request is out": one page at a time
@@ -300,8 +315,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pageMsg:
 		return m, m.handlePage(msg)
 
+	case rowMsg:
+		return m, m.handleRow(msg)
+
 	case detailMsg:
 		accepted := m.detail.handle(msg)
+		if accepted && msg.err == nil {
+			// The detail read is the live one; the row beside it came from a
+			// cached search. Where they disagree, the live read is right.
+			m.list.refresh(msg.issue)
+		}
 		if accepted && m.pendingDescription != "" && msg.request != m.pendingDescriptionRequest {
 			m.pendingDescription = ""
 		}
@@ -335,6 +358,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case writeDoneMsg:
 		return m, m.handleWriteDone(msg)
+
+	case transitionsMsg:
+		return m, m.handleTransitions(msg)
+
+	case transitionDoneMsg:
+		return m, m.handleTransitionDone(msg)
 	}
 	return m, nil
 }
@@ -362,15 +391,30 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-// handleText feeds a keypress to the open prompt. Nothing else can be in text
-// mode: the dispatcher reports text only while a mode was entered by an
-// action, and the actions that enter one are the actions that open a prompt.
+// handleText feeds a keypress to whichever widget is taking keys: the picker
+// while one is open, otherwise the prompt. The dispatcher reports text only
+// while a mode was entered by an action, and the actions that enter one are the
+// actions that open a widget.
 func (m *Model) handleText(key string) tea.Cmd {
+	if m.picker != nil {
+		if !m.picker.handle(key) {
+			return nil
+		}
+		return m.chooseFromPicker()
+	}
 	if m.prompt == nil {
 		// The mode and the widget have come apart. The mode is the wrong one,
 		// since there is nothing on screen for these keys to be typed into.
 		m.dispatch.Reset()
 		return nil
+	}
+	if key == "tab" {
+		// Some arguments can only be completed against Jira. The fetch is asked
+		// for before the widget sees the key, so that completion itself stays
+		// synchronous and the answer is always a live one.
+		if cmd := m.liveCompletion(m.prompt.text()); cmd != nil {
+			return cmd
+		}
 	}
 	if !m.prompt.handle(key) {
 		return nil
@@ -411,8 +455,10 @@ func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
 	}
 	switch action {
 	case config.ActionNormalMode:
-		// Esc abandons whatever was being typed and leaves everything else --
-		// the rows, the query, the search pattern -- alone.
+		// Esc abandons whatever was being typed or chosen and leaves everything
+		// else -- the rows, the query, the search pattern -- alone. Nothing is
+		// applied on the way out.
+		m.closePicker()
 		m.closePrompt()
 		return nil
 	case config.ActionCommandline:
@@ -455,6 +501,15 @@ func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
 		return m.beginWrite(writeComment)
 	case config.ActionEditDesc:
 		return m.beginWrite(writeDescription)
+	case config.ActionTransition:
+		return m.beginTransitionPicker()
+	}
+
+	// A key bound straight to a transition name carries the name in the action
+	// itself, because whether the site has such a transition -- and whether it
+	// is available on this item now -- is only answerable live.
+	if name, ok := action.TransitionName(); ok {
+		return m.beginNamedTransition(name)
 	}
 
 	listVisible, detailVisible := m.visiblePanes()
@@ -792,10 +847,18 @@ func (m *Model) listPane(width, rows int) []string {
 // above it the completion candidates when the last Tab could not choose
 // between them.
 func (m *Model) footer() []string {
+	if m.picker != nil {
+		// The picker sits above the status line rather than over the panes: the
+		// item being transitioned has to stay readable while it is chosen.
+		return append(m.picker.lines(m.width), m.statusLine())
+	}
 	if m.prompt == nil {
 		return []string{m.statusLine()}
 	}
 	line := m.fit(m.prompt.render())
+	if note := m.prompt.note; note != "" {
+		return []string{m.fit(errorStyle.Render(note)), line}
+	}
 	if len(m.prompt.candidates) > 0 {
 		return []string{m.fit(statusStyle.Render(strings.Join(m.prompt.candidates, "  "))), line}
 	}

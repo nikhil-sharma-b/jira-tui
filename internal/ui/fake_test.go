@@ -37,6 +37,9 @@ type fakeClient struct {
 
 	// IssueCalls records live detail fetches. issueErrFor and issueBlock let
 	// detail-pane tests exercise failures and cancellation at the Jira seam.
+	// issueFor answers a live detail read with something other than the row in
+	// issues, which is how a test says "Jira has moved on since the search".
+	issueFor    map[string]jira.Issue
 	IssueCalls  []string
 	IssueFields [][]string
 	issueErrFor map[string]error
@@ -53,6 +56,19 @@ type fakeClient struct {
 	addCommentErr   error
 	Descriptions    []struct{ Key, Body string }
 	descriptionErr  error
+
+	// transitions is what each work item can move to right now. It is answered
+	// live on every call, never from anything the UI kept, which is the
+	// behaviour the picker is required to have.
+	transitions      map[string][]jira.Transition
+	transitionsErr   error
+	TransitionsCalls []string
+	transitionsBlock bool
+
+	// TransitionCalls records the writes, so a test can assert both which
+	// transition id was applied and that a failure was not retried.
+	TransitionCalls []struct{ Key, ID string }
+	transitionErr   error
 }
 
 func (c *fakeClient) Fields(ctx context.Context) ([]jira.Field, error) {
@@ -132,7 +148,13 @@ func (c *fakeClient) Issue(ctx context.Context, key string, fields []string) (*j
 	err := c.issueErrFor[key]
 	block, started := c.issueBlock, c.issueStart
 	var found *jira.Issue
+	if issue, ok := c.issueFor[key]; ok {
+		found = &issue
+	}
 	for i := range c.issues {
+		if found != nil {
+			break
+		}
 		if c.issues[i].Key == key {
 			copy := c.issues[i]
 			found = &copy
@@ -197,8 +219,27 @@ func (c *fakeClient) commentRequests() []string {
 	defer c.mu.Unlock()
 	return append([]string(nil), c.CommentCalls...)
 }
-func (c *fakeClient) Transitions(context.Context, string) ([]jira.Transition, error) {
-	panic("ui list pane called Transitions")
+func (c *fakeClient) Transitions(ctx context.Context, key string) ([]jira.Transition, error) {
+	c.mu.Lock()
+	c.TransitionsCalls = append(c.TransitionsCalls, key)
+	available := append([]jira.Transition(nil), c.transitions[key]...)
+	err, block := c.transitionsErr, c.transitionsBlock
+	c.mu.Unlock()
+
+	if block {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	if err != nil {
+		return nil, err
+	}
+	return available, nil
+}
+
+func (c *fakeClient) transitionsRequests() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.TransitionsCalls...)
 }
 func (c *fakeClient) AddComment(_ context.Context, key, body string) (*jira.Comment, error) {
 	c.mu.Lock()
@@ -217,8 +258,12 @@ func (c *fakeClient) SetDescription(_ context.Context, key, body string) error {
 	c.mu.Unlock()
 	return err
 }
-func (c *fakeClient) Transition(context.Context, string, string) error {
-	panic("ui list pane called Transition")
+func (c *fakeClient) Transition(_ context.Context, key, transitionID string) error {
+	c.mu.Lock()
+	c.TransitionCalls = append(c.TransitionCalls, struct{ Key, ID string }{key, transitionID})
+	err := c.transitionErr
+	c.mu.Unlock()
+	return err
 }
 func (c *fakeClient) Assign(context.Context, string, string) error {
 	panic("ui list pane called Assign")

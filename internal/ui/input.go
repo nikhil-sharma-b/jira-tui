@@ -40,6 +40,13 @@ type prompt struct {
 	// between them. The next keystroke clears it, so what is shown always
 	// describes the line as it stands.
 	candidates []string
+	// note is a message about the line being typed -- today, a completion that
+	// had to ask Jira and could not. It is shown where the candidates are, and
+	// cleared by the same keystroke, because the status line is behind the
+	// prompt and a failure the user cannot see is worse than no completion. It
+	// is kept apart from candidates so that a failure can never be completed
+	// into the line as though it were a candidate.
+	note string
 }
 
 // text is the line without its sigil: what submitting it will act on.
@@ -48,7 +55,7 @@ func (p *prompt) text() string { return string(p.buf) }
 // handle applies one keypress, reporting whether the line was submitted.
 func (p *prompt) handle(key string) (submitted bool) {
 	if key != "tab" {
-		p.candidates = nil
+		p.candidates, p.note = nil, ""
 	}
 	switch key {
 	case "enter":

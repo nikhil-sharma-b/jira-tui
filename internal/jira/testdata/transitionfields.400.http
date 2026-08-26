@@ -1,0 +1,10 @@
+HTTP/1.1 400 Bad Request
+Content-Type: application/json;charset=UTF-8
+
+{
+  "errorMessages": [],
+  "errors": {
+    "resolution": "Resolution is required.",
+    "customfield_10042": "Root cause is required."
+  }
+}

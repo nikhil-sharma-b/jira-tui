@@ -3,6 +3,7 @@ package jira_test
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -37,6 +38,17 @@ type scriptedServer struct {
 	arrived  chan struct{}
 	inFlight int
 	maxSeen  int
+	// sent records what the client actually put on the wire, so a test can
+	// assert on the method, the path and the encoded body of a write without
+	// standing up a server of its own.
+	sent []sentRequest
+}
+
+// sentRequest is one request as the server received it.
+type sentRequest struct {
+	method string
+	path   string
+	body   string
 }
 
 func newScriptedServer(t *testing.T, steps ...step) *scriptedServer {
@@ -50,9 +62,11 @@ func newGatedServer(t *testing.T, gate chan struct{}, steps ...step) *scriptedSe
 	t.Helper()
 	s := &scriptedServer{arrived: make(chan struct{}, 64), gate: gate}
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
 		s.mu.Lock()
 		i := s.count
 		s.count++
+		s.sent = append(s.sent, sentRequest{method: r.Method, path: r.URL.Path, body: string(body)})
 		s.inFlight++
 		if s.inFlight > s.maxSeen {
 			s.maxSeen = s.inFlight
@@ -71,9 +85,14 @@ func newGatedServer(t *testing.T, gate chan struct{}, steps ...step) *scriptedSe
 			i = len(steps) - 1
 		}
 		st := steps[i]
-		if st.fixture != "" {
+		switch {
+		case st.fixture != "":
 			writeFixture(t, w, st.fixture)
-		} else {
+		case st.status == http.StatusNoContent:
+			// A successful write answers with no body at all, which is what
+			// makes "decoded nothing" a case worth scripting.
+			w.WriteHeader(st.status)
+		default:
 			if st.retryAfter != "" {
 				w.Header().Set("Retry-After", st.retryAfter)
 			}
@@ -94,6 +113,13 @@ func (s *scriptedServer) requests() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.count
+}
+
+// received is what the client sent, in order.
+func (s *scriptedServer) received() []sentRequest {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]sentRequest(nil), s.sent...)
 }
 
 func (s *scriptedServer) maxConcurrent() int {
