@@ -62,6 +62,11 @@ type Options struct {
 	Cache  *cache.Cache
 	Config *config.Config
 	Pin    string
+	// Copy writes text to the system clipboard. It defaults to an OSC 52
+	// sequence, which works through tmux when set-clipboard is enabled.
+	Copy func(string) error
+	// OpenURL hands a URL to the platform browser.
+	OpenURL func(string) error
 	// EditorExec defaults to tea.ExecProcess, which releases and restores the
 	// terminal around the configured editor.
 	EditorExec EditorExec
@@ -191,6 +196,9 @@ type Model struct {
 	drafts                    map[draftKey]string
 	pendingDescription        string
 	pendingDescriptionRequest uint64
+
+	copyText func(string) error
+	openURL  func(string) error
 }
 
 // New builds the root model. When Pin is set, detail opens full-width with the
@@ -215,6 +223,14 @@ func New(opts Options) (*Model, error) {
 	if editorExec == nil {
 		editorExec = tea.ExecProcess
 	}
+	copyText := opts.Copy
+	if copyText == nil {
+		copyText = copyToClipboard
+	}
+	openURL := opts.OpenURL
+	if openURL == nil {
+		openURL = openInBrowser
+	}
 	debounce := opts.SearchDebounce
 	if debounce <= 0 {
 		debounce = defaultSearchDebounce
@@ -234,6 +250,8 @@ func New(opts Options) (*Model, error) {
 		editorCommand: editorCommand,
 		editorExec:    editorExec,
 		drafts:        make(map[draftKey]string),
+		copyText:      copyText,
+		openURL:       openURL,
 
 		searchDebounce: debounce,
 	}
@@ -404,6 +422,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case assignDoneMsg:
 		return m, m.handleAssignDone(msg)
+
+	case integrationMsg:
+		return m, m.handleIntegration(msg)
 	}
 	return m, nil
 }
@@ -563,6 +584,12 @@ func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
 		return m.beginTransitionPicker()
 	case config.ActionAssign:
 		return m.beginAssignPicker()
+	case config.ActionYankKey:
+		return m.copyFocused(false)
+	case config.ActionYankURL:
+		return m.copyFocused(true)
+	case config.ActionOpenBrowser:
+		return m.openFocusedInBrowser()
 	}
 
 	// A key bound straight to a transition name carries the name in the action
