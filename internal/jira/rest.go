@@ -526,12 +526,45 @@ func (c *REST) Transition(ctx context.Context, key, transitionID string) error {
 	return err
 }
 
+// Assign sets the assignee, and clears it when accountID is empty. The field
+// is sent as an explicit null to unassign: an absent field would leave the
+// assignee alone, and "-1" would hand the item to whoever the project defaults
+// to, which is a third thing nobody asked for. Like every write it goes to v2
+// and is never retried.
 func (c *REST) Assign(ctx context.Context, key, accountID string) error {
-	panic("not implemented")
+	payload := struct {
+		AccountID *string `json:"accountId"`
+	}{}
+	if accountID != "" {
+		payload.AccountID = &accountID
+	}
+	return c.put(ctx, "assign", apiWrite, "/issue/"+url.PathEscape(key)+"/assignee", payload, nil)
 }
 
+// assignableLimit bounds one page of candidates. The picker is searched rather
+// than scrolled, so a longer list would only cost bytes: a name that is not in
+// the first fifty is found by typing more of it, not by paging.
+const assignableLimit = 50
+
+// SearchUsers finds the users assignable to one work item, narrowed by query.
+// Assignability is asked of the item rather than of the project, because
+// permission schemes are per-project but roles are per-user, and a picker that
+// offers an unassignable account is a picker that fails on Enter.
 func (c *REST) SearchUsers(ctx context.Context, key, query string) ([]User, error) {
-	panic("not implemented")
+	q := url.Values{
+		"issueKey":   {key},
+		"maxResults": {strconv.Itoa(assignableLimit)},
+	}
+	if query != "" {
+		// Omitted rather than sent empty: an empty query is the picker opening,
+		// which asks who is assignable at all.
+		q.Set("query", query)
+	}
+	var users []User
+	if err := c.get(ctx, "assignable users", apiRead, "/user/assignable/search", q, &users); err != nil {
+		return nil, err
+	}
+	return users, nil
 }
 
 func (c *REST) DownloadAttachment(ctx context.Context, attachmentID string, dst Writer) (int64, error) {

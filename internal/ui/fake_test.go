@@ -69,6 +69,19 @@ type fakeClient struct {
 	// transition id was applied and that a failure was not retried.
 	TransitionCalls []struct{ Key, ID string }
 	transitionErr   error
+
+	// users answers an assignable-user search per query, so a test can make the
+	// server return something a local filter over the previous answer could not
+	// have produced -- which is how "the search really goes to Jira" is
+	// observed at all. A query with no entry falls back to the empty one.
+	users       map[string][]jira.User
+	usersErr    error
+	SearchCalls []struct{ Key, Query string }
+	myself      *jira.User
+	myselfErr   error
+	MyselfCalls int
+	AssignCalls []struct{ Key, AccountID string }
+	assignErr   error
 }
 
 func (c *fakeClient) Fields(ctx context.Context) ([]jira.Field, error) {
@@ -265,17 +278,104 @@ func (c *fakeClient) Transition(_ context.Context, key, transitionID string) err
 	c.mu.Unlock()
 	return err
 }
-func (c *fakeClient) Assign(context.Context, string, string) error {
-	panic("ui list pane called Assign")
+
+// Assign records the write and moves the fake's own copy of the work item, so
+// that reading it back afterwards shows what was written rather than what the
+// UI believes it wrote.
+func (c *fakeClient) Assign(_ context.Context, key, accountID string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.AssignCalls = append(c.AssignCalls, struct{ Key, AccountID string }{key, accountID})
+	if c.assignErr != nil {
+		return c.assignErr
+	}
+	assignee := c.lookupUser(accountID)
+	for i := range c.issues {
+		if c.issues[i].Key == key {
+			c.issues[i].Assignee = assignee
+		}
+	}
+	if issue, ok := c.issueFor[key]; ok {
+		issue.Assignee = assignee
+		c.issueFor[key] = issue
+	}
+	return nil
 }
-func (c *fakeClient) SearchUsers(context.Context, string, string) ([]jira.User, error) {
-	panic("ui list pane called SearchUsers")
+
+// lookupUser finds the account an assignment names, nil for the empty account
+// id that means unassigned. The caller holds the lock.
+func (c *fakeClient) lookupUser(accountID string) *jira.User {
+	if accountID == "" {
+		return nil
+	}
+	if c.myself != nil && c.myself.AccountID == accountID {
+		found := *c.myself
+		return &found
+	}
+	for _, users := range c.users {
+		for _, u := range users {
+			if u.AccountID == accountID {
+				found := u
+				return &found
+			}
+		}
+	}
+	return &jira.User{AccountID: accountID, DisplayName: accountID}
 }
+
+func (c *fakeClient) SearchUsers(_ context.Context, key, query string) ([]jira.User, error) {
+	c.mu.Lock()
+	users, ok := c.users[query]
+	if !ok {
+		users = c.users[""]
+	}
+	users = append([]jira.User(nil), users...)
+	err := c.usersErr
+	c.SearchCalls = append(c.SearchCalls, struct{ Key, Query string }{key, query})
+	c.mu.Unlock()
+
+	if err != nil {
+		return nil, err
+	}
+	return users, nil
+}
+
+// searchCalls reports the assignable-user searches that were made, which is
+// how debouncing is observed: a request that a later keystroke made pointless
+// simply never happens.
+func (c *fakeClient) searchCalls() []struct{ Key, Query string } {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]struct{ Key, Query string }(nil), c.SearchCalls...)
+}
+
+func (c *fakeClient) assignCalls() []struct{ Key, AccountID string } {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]struct{ Key, AccountID string }(nil), c.AssignCalls...)
+}
+
 func (c *fakeClient) DownloadAttachment(context.Context, string, jira.Writer) (int64, error) {
 	panic("ui list pane called DownloadAttachment")
 }
 func (c *fakeClient) Myself(context.Context) (*jira.User, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.MyselfCalls++
+	if c.myselfErr != nil {
+		return nil, c.myselfErr
+	}
+	if c.myself != nil {
+		found := *c.myself
+		return &found, nil
+	}
 	return &jira.User{AccountID: "acct-1", DisplayName: "Test User"}, nil
+}
+
+func (c *fakeClient) myselfCalls() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.MyselfCalls
 }
 func (c *fakeClient) BrowseURL(key string) string {
 	return "https://example.atlassian.net/browse/" + key

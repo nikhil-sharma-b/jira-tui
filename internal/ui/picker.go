@@ -9,9 +9,10 @@ import (
 // The picker is how a choice is made out of a set the user cannot be expected
 // to have memorised: it lists what is actually available and narrows as they
 // type. It is deliberately not the commandline widget. A commandline submits
-// text and completes it; a picker holds a set fetched from Jira, filters it
-// locally, and submits the identity of one member -- the transition id rather
-// than the status name that was displayed.
+// text and completes it; a picker holds a set fetched from Jira and submits the
+// identity of one member -- the transition id rather than the status name that
+// was displayed. Narrowing is local for a set that arrived whole, and left to
+// the server for a set only it can enumerate.
 //
 // Like the prompt, it never sees Esc: the dispatcher resolves that before any
 // mode is consulted, so closing is the model's decision, not the widget's.
@@ -23,8 +24,29 @@ type pickerItem struct {
 	label string
 }
 
+// pickerKind says what a picker is choosing, because what Enter does with the
+// chosen id differs and the widget itself is deliberately ignorant of it.
+type pickerKind uint8
+
+const (
+	pickerTransition pickerKind = iota
+	pickerAssign
+)
+
 // picker is the filterable list at the bottom of the screen.
 type picker struct {
+	kind pickerKind
+	// serverFiltered says the set on screen was chosen by the server for the
+	// filter as it stands. Such a set is not filtered again here: the server has
+	// already answered the question, and narrowing its answer by substring would
+	// hide matches it found by other means -- an email, a nickname, a middle
+	// name.
+	serverFiltered bool
+	// waiting is what to say while the choices are being fetched, since a
+	// picker that is empty for a moment should say why rather than look like a
+	// picker with nothing in it. Supplied by whoever opened it, like the title.
+	waiting string
+
 	// title says what is being chosen and for which work item, since a picker
 	// opened from the list is about a row that may have scrolled away.
 	title string
@@ -49,8 +71,18 @@ const pickerRows = 8
 func (p *picker) setItems(items []pickerItem) {
 	p.loading = false
 	p.items = items
+	if p.serverFiltered {
+		// A fresh answer from the server is a different list, not a narrowing of
+		// the one before it, so the cursor starts at its top rather than at
+		// whatever row happens to sit where it used to be.
+		p.cursor = 0
+	}
 	p.refilter()
 }
+
+// text is the filter as typed, which for a server-filtered picker is the
+// search term the site was last asked about.
+func (p *picker) text() string { return string(p.filter) }
 
 // refilter recomputes the matches and keeps the cursor inside them. The filter
 // is a case-insensitive substring: a user typing "prog" is describing what they
@@ -59,7 +91,7 @@ func (p *picker) refilter() {
 	needle := strings.ToLower(string(p.filter))
 	p.matches = p.matches[:0]
 	for i, item := range p.items {
-		if needle == "" || strings.Contains(strings.ToLower(item.label), needle) {
+		if p.serverFiltered || needle == "" || strings.Contains(strings.ToLower(item.label), needle) {
 			p.matches = append(p.matches, i)
 		}
 	}
@@ -124,7 +156,7 @@ func (p *picker) lines(width int) []string {
 	lines := []string{statusStyle.Render(fitWidth(p.title, width))}
 	switch {
 	case p.loading:
-		lines = append(lines, fitWidth("Loading transitions…", width))
+		lines = append(lines, fitWidth(p.waiting, width))
 	case len(p.matches) == 0:
 		lines = append(lines, fitWidth("Nothing matches.", width))
 	default:

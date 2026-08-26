@@ -53,6 +53,13 @@ demands fields jt does not collect: the per-field `errors` object, which is
 what turns into a `FieldsRequiredError`. It is likewise written to the
 documented shape, since provoking one needs a workflow configured for it.
 
+`assignableusers.200` is Atlassian's documented v3 assignable-user response
+rather than a capture: who may be assigned to a work item is a property of one
+site's permission scheme, and recording it would also mean scrubbing every
+colleague out of it again. It covers the account id, and an account whose email
+the site's privacy settings withhold -- which must still be selectable, since
+the account id is the only identifier an assignment needs.
+
 To capture more, add a case to `tools/capturefixtures` and run it against your
 own site:
 

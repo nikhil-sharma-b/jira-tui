@@ -68,7 +68,10 @@ func (m *Model) beginTransitionPicker() tea.Cmd {
 	// A picker under a full-screen overlay is a picker chosen from blind.
 	m.help.Hide()
 	m.status = nil
-	m.picker = &picker{title: "Transition " + key, key: key, loading: true}
+	m.picker = &picker{
+		kind: pickerTransition, loading: true,
+		title: "Transition " + key, waiting: "Loading transitions…", key: key,
+	}
 	m.resizePanes()
 	return m.fetchTransitions(key, intentPicker, "")
 }
@@ -100,11 +103,14 @@ func (m *Model) fetchTransitions(key string, intent transitionIntent, name strin
 }
 
 // closePicker puts the picker away and the dispatcher back in normal mode, and
-// makes any fetch still in flight for it harmless. Cancelling and choosing both
-// come through here, so neither can leave the modal state behind.
+// makes any fetch still in flight for it harmless -- whichever kind of picker
+// it was, since both counters are what their in-flight responses are checked
+// against. Cancelling and choosing both come through here, so neither can leave
+// the modal state behind.
 func (m *Model) closePicker() {
 	m.picker = nil
 	m.transitionRequest++
+	m.assignRequest++
 	m.dispatch.Reset()
 	m.resizePanes()
 }
@@ -130,7 +136,7 @@ func (m *Model) handleTransitions(msg transitionsMsg) tea.Cmd {
 // choose from. An empty workflow closes the picker rather than presenting an
 // empty list to filter.
 func (m *Model) showTransitions(msg transitionsMsg) tea.Cmd {
-	if m.picker == nil || m.picker.key != msg.key {
+	if m.picker == nil || m.picker.kind != pickerTransition || m.picker.key != msg.key {
 		return nil
 	}
 	switch {
@@ -169,17 +175,20 @@ func transitionItems(transitions []jira.Transition) []pickerItem {
 	return items
 }
 
-// chooseFromPicker applies what the picker has selected. It sends the
-// transition id, never the status name that was displayed. It is reached only
-// once the picker reports a submission, which it does only when there is
-// something selected to submit.
+// chooseFromPicker acts on what the picker has selected. It sends the chosen
+// item's identity -- a transition id, an account id -- and never the label that
+// was displayed. It is reached only once the picker reports a submission, which
+// it does only when there is something selected to submit.
 func (m *Model) chooseFromPicker() tea.Cmd {
 	item, ok := m.picker.selected()
-	key := m.picker.key
+	key, kind := m.picker.key, m.picker.kind
 	if !ok {
 		return nil
 	}
 	m.closePicker()
+	if kind == pickerAssign {
+		return m.chooseAssignee(item, key)
+	}
 	return m.applyTransition(key, item.id, item.label)
 }
 
@@ -267,15 +276,23 @@ func (m *Model) handleTransitionDone(msg transitionDoneMsg) tea.Cmd {
 		// they have left behind.
 		return nil
 	}
-	// The status just changed, and the focused item is never cached, so the
-	// truth is one live read away. Which read depends on what is on screen: the
-	// detail pane refetches when it is already showing this item, and otherwise
-	// only the row is refreshed -- a write must not open a pane or move focus,
-	// which is navigation the user did not ask for.
-	if m.detail.open && m.detail.key == msg.key && msg.detailRequest == m.detail.request {
-		return m.openKey(msg.key, false)
+	return m.readBack(msg.key, msg.detailRequest)
+}
+
+// readBack is what a successful write to a work item does next. Something the
+// user is looking at has just changed and the row showing it came from a cached
+// search, so the truth is one live read away. Which read depends on what is on
+// screen: the detail pane refetches when it is already showing this item, and
+// otherwise only the row is refreshed -- a write must not open a pane or move
+// focus, which is navigation the user did not ask for.
+//
+// detailRequest is the one the write was started under: a detail pane that has
+// since been pointed at something else is not this item's pane any more.
+func (m *Model) readBack(key string, detailRequest uint64) tea.Cmd {
+	if m.detail.open && m.detail.key == key && detailRequest == m.detail.request {
+		return m.openKey(key, false)
 	}
-	return m.refreshRow(msg.key)
+	return m.refreshRow(key)
 }
 
 // rowMsg carries a live reading of one work item for the row that shows it.

@@ -41,6 +41,7 @@ var commands = []command{
 	{name: "qa", run: func(m *Model, _ string) tea.Cmd { return tea.Quit }},
 	{name: "jql", run: runJQL, completeArg: completeSavedQueries},
 	{name: "transition", run: runTransition, completeArg: completeTransitions, liveArgs: liveTransitions},
+	{name: "assign", run: runAssign},
 	{name: "cache", run: runCache, completeArg: func(_ *Model, partial string) []string {
 		if !strings.HasPrefix("clear", partial) {
 			return nil
@@ -112,6 +113,22 @@ func runTransition(m *Model, arg string) tea.Cmd {
 		return nil
 	}
 	return m.beginNamedTransition(arg)
+}
+
+// runAssign reassigns the focused work item by name. The name is resolved
+// against the site when the line is submitted, because who is assignable is a
+// property of the item and of the moment -- and because an account id is the
+// thing this command exists to avoid ever typing.
+//
+// It offers no completion: candidates would have to be fetched for each Tab
+// over a set that is searched rather than enumerated, and the picker is what
+// that search already is.
+func runAssign(m *Model, arg string) tea.Cmd {
+	if arg == "" {
+		m.status = errors.New("assign: needs a name; <leader>a opens the picker")
+		return nil
+	}
+	return m.beginNamedAssign(arg)
 }
 
 // completeTransitions offers the live names the model has just fetched for

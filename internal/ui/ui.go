@@ -64,6 +64,11 @@ type Options struct {
 	// EditorExec defaults to tea.ExecProcess, which releases and restores the
 	// terminal around the configured editor.
 	EditorExec EditorExec
+	// SearchDebounce is how long a keystroke in a picker that searches the
+	// server waits for the next one. Zero takes defaultSearchDebounce; a test
+	// sets it short so that what is being asserted is the ordering rather than
+	// the wait.
+	SearchDebounce time.Duration
 }
 
 // Model is the root bubbletea model. It owns the query, the loaded result set
@@ -122,6 +127,19 @@ type Model struct {
 	// same call: transitions are never cached, and a completion offering a name
 	// from a minute ago would be the same lie a cache would tell.
 	transitionNames []string
+
+	// assignRequest orders every user search and every assignment, so a
+	// response that outlived its question -- the picker closed, another letter
+	// typed, an assignment already started -- is recognised and dropped. It is
+	// what makes the search debounced rather than merely delayed.
+	assignRequest uint64
+	// searchDebounce is how long a keystroke waits for the next one before the
+	// server is asked about it.
+	searchDebounce time.Duration
+	// myself is the authenticated account, fetched once on the first assignment
+	// of a session and kept: who the user is does not change while jt is open,
+	// and the picker pins them to its top every time it opens.
+	myself *jira.User
 
 	width, height int
 
@@ -190,6 +208,10 @@ func New(opts Options) (*Model, error) {
 	if editorExec == nil {
 		editorExec = tea.ExecProcess
 	}
+	debounce := opts.SearchDebounce
+	if debounce <= 0 {
+		debounce = defaultSearchDebounce
+	}
 	m := &Model{
 		client:        opts.Client,
 		cfg:           cfg,
@@ -205,6 +227,8 @@ func New(opts Options) (*Model, error) {
 		editorCommand: editorCommand,
 		editorExec:    editorExec,
 		drafts:        make(map[draftKey]string),
+
+		searchDebounce: debounce,
 	}
 	if opts.Pin != "" {
 		m.listVisible = false
@@ -364,6 +388,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case transitionDoneMsg:
 		return m, m.handleTransitionDone(msg)
+
+	case usersMsg:
+		return m, m.handleUsers(msg)
+
+	case assignSearchMsg:
+		return m, m.handleAssignSearch(msg)
+
+	case assignDoneMsg:
+		return m, m.handleAssignDone(msg)
 	}
 	return m, nil
 }
@@ -397,10 +430,17 @@ func (m *Model) handleKey(msg tea.KeyMsg) tea.Cmd {
 // actions that open a widget.
 func (m *Model) handleText(key string) tea.Cmd {
 	if m.picker != nil {
-		if !m.picker.handle(key) {
-			return nil
+		before := m.picker.text()
+		if m.picker.handle(key) {
+			return m.chooseFromPicker()
 		}
-		return m.chooseFromPicker()
+		if m.picker.serverFiltered && m.picker.text() != before {
+			// The set on screen belongs to the filter that produced it, so a
+			// changed filter is a question for the server rather than something
+			// to narrow locally.
+			return m.debounceUserSearch()
+		}
+		return nil
 	}
 	if m.prompt == nil {
 		// The mode and the widget have come apart. The mode is the wrong one,
@@ -503,6 +543,8 @@ func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
 		return m.beginWrite(writeDescription)
 	case config.ActionTransition:
 		return m.beginTransitionPicker()
+	case config.ActionAssign:
+		return m.beginAssignPicker()
 	}
 
 	// A key bound straight to a transition name carries the name in the action

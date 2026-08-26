@@ -1,0 +1,18 @@
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+[
+  {
+    "accountId": "5b10a2844c20165700ede21g",
+    "accountType": "atlassian",
+    "displayName": "Ada Lovelace",
+    "emailAddress": "ada@example.com",
+    "active": true
+  },
+  {
+    "accountId": "5b10ac8d82e05b22cc7d4ef5",
+    "accountType": "atlassian",
+    "displayName": "Grace Hopper",
+    "active": true
+  }
+]
