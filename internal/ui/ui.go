@@ -85,6 +85,7 @@ type Model struct {
 	cfg    *config.Config
 	store  store
 
+	bindings *config.Bindings
 	dispatch *Dispatcher
 	help     *Help
 
@@ -243,6 +244,7 @@ func New(opts Options) (*Model, error) {
 		client:        opts.Client,
 		cfg:           cfg,
 		store:         store{cache: opts.Cache, site: cfg.SiteURL()},
+		bindings:      bindings,
 		dispatch:      NewDispatcher(bindings),
 		help:          NewHelp(bindings),
 		query:         cfg.DefaultQuery,
@@ -854,9 +856,10 @@ func (m *Model) View() string {
 	bodyRows := max(m.height-len(footer), 0)
 	var lines []string
 	if detailVisible {
-		lines = boxed(m.detail.view(), m.width, bodyRows, m.detailTitle(), true)
+		lines = boxed(m.detail.view(), m.width, bodyRows, m.detailTitle(), m.paneHint(config.ActionPaneRight), true)
 	} else {
-		lines = boxed(m.listPane(inner(m.width), inner(bodyRows)), m.width, bodyRows, listTitle, true)
+		lines = boxed(m.listPane(inner(m.width), inner(bodyRows)), m.width, bodyRows, listTitle,
+			m.paneHint(config.ActionPaneLeft), true)
 	}
 	for len(lines) < bodyRows {
 		lines = append(lines, "")
@@ -864,7 +867,7 @@ func (m *Model) View() string {
 	if len(lines) > bodyRows {
 		lines = lines[:bodyRows]
 	}
-	return strings.Join(append(lines, footer...), "\n")
+	return strings.Join(append(m.whichKeyFloat(lines), footer...), "\n")
 }
 
 func (m *Model) paneWidths() (int, int) {
@@ -876,6 +879,17 @@ func (m *Model) paneWidths() (int, int) {
 // named for the item in it, since that is what a user looking at two panes
 // needs to tell them apart.
 const listTitle = "Work Items"
+
+// paneHint is the key that moves focus to a pane, drawn in its frame so the
+// way to reach a pane is on the pane itself. An unbound action has no hint:
+// the frame must not advertise a key that does nothing.
+func (m *Model) paneHint(a config.Action) string {
+	keys, ok := m.bindings.Display(a)
+	if !ok {
+		return ""
+	}
+	return keys
+}
 
 func (m *Model) detailTitle() string {
 	if m.detail.key != "" {
@@ -905,8 +919,9 @@ func (m *Model) twoPaneView() string {
 	bodyRows := max(m.height-len(footer), 0)
 	leftWidth, rightWidth := m.paneWidths()
 	left := boxed(m.listPane(inner(leftWidth), inner(bodyRows)), leftWidth, bodyRows,
-		listTitle, m.focus == PaneList)
-	right := boxed(m.detail.view(), rightWidth, bodyRows, m.detailTitle(), m.focus == PaneDetail)
+		listTitle, m.paneHint(config.ActionPaneLeft), m.focus == PaneList)
+	right := boxed(m.detail.view(), rightWidth, bodyRows, m.detailTitle(),
+		m.paneHint(config.ActionPaneRight), m.focus == PaneDetail)
 
 	lines := make([]string, bodyRows)
 	for i := range bodyRows {
@@ -922,7 +937,7 @@ func (m *Model) twoPaneView() string {
 		}
 		lines[i] = l + r
 	}
-	return strings.Join(append(lines, footer...), "\n")
+	return strings.Join(append(m.whichKeyFloat(lines), footer...), "\n")
 }
 
 func (m *Model) listPane(width, rows int) []string {
@@ -1003,10 +1018,10 @@ func (m *Model) rowLines(widths []int, numWidth, width int) []string {
 // modal: a modal has to be dismissed before the list can be looked at again.
 func (m *Model) statusLine() string {
 	if m.status != nil {
-		return errorStyle.Render(m.fit(m.withOfflineMarker(m.status.Error())))
+		return m.withPending(errorStyle.Render(m.fit(m.withOfflineMarker(m.status.Error()))))
 	}
 	if m.notice != "" {
-		return statusStyle.Render(m.fit(m.withOfflineMarker(m.notice)))
+		return m.withPending(statusStyle.Render(m.fit(m.withOfflineMarker(m.notice))))
 	}
 	var b strings.Builder
 	if n := len(m.list.issues); n > 0 {
@@ -1034,7 +1049,38 @@ func (m *Model) statusLine() string {
 		b.WriteString("  ")
 	}
 	b.WriteString(m.query)
-	return statusStyle.Render(m.fit(m.withOfflineMarker(b.String())))
+	return m.withPending(statusStyle.Render(m.fit(m.withOfflineMarker(b.String()))))
+}
+
+// withPending writes the half-typed keys into the right end of the status
+// line, as vim does: a prefix like ctrl+w swallows the next keypress, so the
+// fact that one is in flight has to be visible, and the way out of it -- Esc,
+// or finishing the sequence -- is then a decision rather than a guess. The
+// left text is truncated rather than the indicator: what is being typed now
+// matters more than the tail of a long query.
+func (m *Model) withPending(line string) string {
+	pending := m.pendingKeys()
+	if pending == "" || m.width <= 0 {
+		return line
+	}
+	keys := pendingStyle.Render(pending)
+	room := m.width - ansi.StringWidth(pending) - 1
+	if room < 1 {
+		return line
+	}
+	line = ansi.Truncate(line, room, "…")
+	return line + strings.Repeat(" ", room-ansi.StringWidth(line)+1) + keys
+}
+
+// pendingKeys is the unfinished keypress: the count typed so far and the keys
+// of a sequence that has not resolved, in the order they were struck.
+func (m *Model) pendingKeys() string {
+	var b strings.Builder
+	if n := m.dispatch.Count(); n > 0 {
+		fmt.Fprintf(&b, "%d", n)
+	}
+	b.WriteString(m.dispatch.Pending())
+	return b.String()
 }
 
 // withOfflineMarker prefixes the offline state, which outlives any one failure: while the

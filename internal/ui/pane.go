@@ -22,10 +22,10 @@ func inner(size int) int { return max(size-frameWidth, 0) }
 
 // boxed draws lines inside a rounded frame of exactly width columns and height
 // rows, padding or trimming the content to fit. title is written into the top
-// edge; focused decides whether the frame is drawn in the accent colour or in
+// edge and hint, the key that moves focus here, into its right end; focused decides whether the frame is drawn in the accent colour or in
 // the quieter one, which is the only thing on screen saying where a keypress
 // will land when both panes are up.
-func boxed(lines []string, width, height int, title string, focused bool) []string {
+func boxed(lines []string, width, height int, title, hint string, focused bool) []string {
 	if width < frameWidth+1 || height < frameWidth {
 		return lines
 	}
@@ -35,7 +35,7 @@ func boxed(lines []string, width, height int, title string, focused bool) []stri
 	}
 
 	out := make([]string, 0, height)
-	out = append(out, border.Render("╭")+topEdge(title, content, focused, border)+border.Render("╮"))
+	out = append(out, border.Render("╭")+topEdge(title, hint, content, focused, border)+border.Render("╮"))
 	for i := range height - frameWidth {
 		line := ""
 		if i < len(lines) {
@@ -50,9 +50,11 @@ func boxed(lines []string, width, height int, title string, focused bool) []stri
 }
 
 // topEdge is the frame's top rule with the pane's name set into it, one space
-// clear of the corner. A title too long for the pane is dropped rather than
-// truncated: half a word in a border reads as corruption.
-func topEdge(title string, width int, focused bool, border lipgloss.Style) string {
+// clear of the left corner, and the key that focuses the pane one space clear
+// of the right. Either is dropped rather than truncated when the pane is too
+// narrow for it: half a word in a border reads as corruption. The name wins
+// the last columns, since a pane with no name cannot be told apart at all.
+func topEdge(title, hint string, width int, focused bool, border lipgloss.Style) string {
 	name := titleStyle
 	if !focused {
 		name = lipgloss.NewStyle().Foreground(noteColor)
@@ -61,5 +63,11 @@ func topEdge(title string, width int, focused bool, border lipgloss.Style) strin
 		return border.Render(strings.Repeat("─", width))
 	}
 	used := ansi.StringWidth(title) + 3
-	return border.Render("─ ") + name.Render(title) + border.Render(" "+strings.Repeat("─", width-used))
+	rule := width - used
+	if hint != "" && ansi.StringWidth(hint)+3 <= rule {
+		rule -= ansi.StringWidth(hint) + 2
+		return border.Render("─ ") + name.Render(title) +
+			border.Render(" "+strings.Repeat("─", rule)+" ") + hintStyle.Render(hint) + border.Render(" ")
+	}
+	return border.Render("─ ") + name.Render(title) + border.Render(" "+strings.Repeat("─", rule))
 }

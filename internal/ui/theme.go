@@ -34,6 +34,13 @@ var (
 	// name written into its top edge.
 	borderStyle = lipgloss.NewStyle().Foreground(accent)
 	titleStyle  = lipgloss.NewStyle().Foreground(accent).Bold(true)
+	// hintStyle is the key written into a frame's top-right edge. It is quiet
+	// in both panes: it is a reminder, not part of what the pane says.
+	hintStyle = lipgloss.NewStyle().Foreground(noteColor)
+	// pendingStyle is the half-typed key sequence at the right of the status
+	// line. It is bright: it says the next keypress will not mean what it
+	// usually means.
+	pendingStyle = lipgloss.NewStyle().Foreground(accent).Bold(true)
 )
 
 var (

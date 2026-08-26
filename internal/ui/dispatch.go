@@ -245,3 +245,10 @@ func (m Mode) String() string {
 	}
 	return "unknown"
 }
+
+// PendingTokens is the unfinished key sequence as tokens, for the which-key
+// menu, which has to ask the bindings what may follow it rather than only
+// print it.
+func (d *Dispatcher) PendingTokens() []string {
+	return append([]string(nil), d.pending...)
+}

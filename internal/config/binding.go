@@ -344,3 +344,40 @@ func tokenizeLeader(leader string) ([]string, error) {
 	}
 	return tokens, nil
 }
+
+// Continuation is one key that can follow a prefix: either a binding it
+// completes, or a longer sequence it leads further into.
+type Continuation struct {
+	// Key is the next keypress, spelled as the user would read it.
+	Key string
+	// Action is what this key fires, empty when Group is true.
+	Action Action
+	// Group says the key leads to more keys rather than firing anything.
+	Group bool
+}
+
+// Continuations lists the keys that can follow a prefix, sorted by key, for a
+// which-key style menu. It reads the compiled table rather than the config, so
+// what the menu offers is exactly what the next keypress will do.
+func (b *Bindings) Continuations(prefix []string) []Continuation {
+	head := strings.Join(prefix, tokenSep) + tokenSep
+	seen := make(map[string]Continuation)
+	for keys, a := range b.byKeys {
+		if !strings.HasPrefix(keys, head) {
+			continue
+		}
+		rest := strings.Split(strings.TrimPrefix(keys, head), tokenSep)
+		next := DisplayKeys(rest[:1])
+		if len(rest) > 1 {
+			seen[next] = Continuation{Key: next, Group: true}
+			continue
+		}
+		seen[next] = Continuation{Key: next, Action: a}
+	}
+	out := make([]Continuation, 0, len(seen))
+	for _, c := range seen {
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
+}

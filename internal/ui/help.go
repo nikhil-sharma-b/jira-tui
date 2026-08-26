@@ -100,6 +100,24 @@ var helpCategories = []category{
 	}},
 }
 
+// actionLabel is what an action does, in the same words the help overlay uses
+// for it, so the which-key menu and the overlay cannot describe a key
+// differently. An action documented nowhere falls back to its config name,
+// which is still what the user would write to rebind it.
+func actionLabel(a config.Action) string {
+	for _, c := range helpCategories {
+		for _, e := range c.entries {
+			if e.action == a {
+				return e.what
+			}
+		}
+	}
+	if name, ok := a.TransitionName(); ok {
+		return "transition to " + name
+	}
+	return string(a)
+}
+
 // helpIndent is the left margin of a binding line under its heading.
 const helpIndent = "  "
 
