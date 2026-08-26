@@ -32,7 +32,7 @@ func TestArrivingAtAPaneNeverStartsTextInput(t *testing.T) {
 		{"detail opened with Enter", func(d *driver) { d.keys("enter") }},
 		{"list addressed with gl", func(d *driver) { d.keys("enter", "g", "l") }},
 		{"detail addressed with gd", func(d *driver) { d.keys("enter", "g", "l", "g", "d") }},
-		{"comments addressed with gc", func(d *driver) { d.keys("enter", "g", "c") }},
+		{"detail tabs cycled with ]", func(d *driver) { d.keys("enter", "]") }},
 		{"list reached with Ctrl-w h", func(d *driver) { d.keys("enter", "ctrl+w", "h") }},
 		{"detail reached with Ctrl-w l", func(d *driver) { d.keys("enter", "ctrl+w", "h", "ctrl+w", "l") }},
 	}

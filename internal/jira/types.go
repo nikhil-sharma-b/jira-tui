@@ -40,6 +40,27 @@ type Comment struct {
 	Body RawDocument `json:"body"`
 }
 
+// IssueLink is a relationship to another work item, named from the point of
+// view of the item that was fetched: "blocks" and "is blocked by" are the same
+// link seen from either end, so the direction is resolved here rather than
+// left for the UI to work out.
+type IssueLink struct {
+	// Relation is the directed name, e.g. "blocks" or "is blocked by".
+	Relation string
+	Key      string
+	Summary  string
+	Status   Status
+	Type     string
+}
+
+// Subtask is a child work item, carrying only what a list of children shows.
+type Subtask struct {
+	Key     string
+	Summary string
+	Status  Status
+	Type    string
+}
+
 // Transition is a workflow move available on one work item at one moment.
 // Availability depends on the item's current status and the caller's
 // permissions, so these are always fetched live and never cached.
@@ -71,6 +92,8 @@ type Issue struct {
 	Description RawDocument
 	Attachments []Attachment
 	Comments    []Comment
+	Links       []IssueLink
+	Subtasks    []Subtask
 	// Raw holds fields we have no typed home for, keyed by field ID, so that
 	// configurable columns can display custom fields without a code change.
 	Raw map[string]any

@@ -83,8 +83,8 @@ var helpCategories = []category{
 		{config.ActionPaneZoom, "zoom pane"},
 		{config.ActionGoList, "go to list"},
 		{config.ActionGoDetail, "go to detail"},
-		{config.ActionGoComments, "go to comments"},
-		{config.ActionGoAttachments, "go to attachments"},
+		{config.ActionPrevTab, "previous detail tab"},
+		{config.ActionNextTab, "next detail tab"},
 	}},
 	{"ACTIONS", []entry{
 		{config.ActionOpen, "open"},

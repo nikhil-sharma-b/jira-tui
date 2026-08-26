@@ -67,9 +67,8 @@ returns to normal mode; a text field is only ever entered deliberately.
     that pane movement matches vim windows.
 12. As a vim user, I want `Ctrl-w o` to zoom the current pane, so that I can read a long
     description at full width.
-13. As a vim user, I want `gl`, `gd`, `gc`, `ga` to jump directly to the list, detail,
-    comments and attachments, so that I never cycle focus with Tab to reach a
-    known destination.
+13. As a vim user, I want `gl` and `gd` to jump directly to the list and detail,
+    and `[` / `]` to cycle detail tabs, so that Tab remains free for text input.
 14. As a vim user, I want `Esc` to return to normal mode from anywhere, with no widget
     ever swallowing it, so that I am never stuck inside a field.
 15. As a vim user, I want text input to require an explicit action key to enter, so
@@ -283,8 +282,8 @@ Focus is **directly addressed, never cycled.** This is the direct answer to the 
 complaint about `jiratui`.
 
 - Spatial movement: `Ctrl-w h` / `Ctrl-w l`, plus `Ctrl-w o` to zoom.
-- Semantic jumps: `gl` list, `gd` detail, `gc` comments, `ga` attachments — valid from
-  anywhere in normal mode.
+- Semantic jumps: `gl` list and `gd` detail are valid from anywhere in normal
+  mode; `[` / `]` cycle the detail tabs.
 - **No widget ever consumes `Esc`.** It unconditionally returns to normal mode.
 - **Text input is entered only by an explicit action key**, never by arriving at a
   field. This is what makes the modal model hold together.
@@ -310,7 +309,8 @@ MOTION (any list)
 
 PANES
   Ctrl-w h / l   move left / right     Ctrl-w o   zoom current
-  gl  list       gd  detail       gc  comments    ga  attachments
+  gl  list       gd  detail
+  DETAIL TABS   [  previous       ]  next
 
 ACTIONS (focused work item)
   Enter          open detail       Ctrl-o / Ctrl-i   jump back / forward
@@ -330,9 +330,13 @@ COMMANDLINE
 
 ### Layout
 
-- **Two panes: list on the left, detail on the right.** Comments and attachments are
-  sections *inside* detail, reached by `gc` / `ga`, not sibling panes. Three panes is
-  unreadable in an 80-column tmux pane.
+- **Two panes: list on the left, detail on the right.** Everything about one work
+  item -- its description, its fields, its comments, attachments, links and
+  subtasks -- lives in the detail pane, as tabs across its top in the manner of
+  jiratui. The `[` and `]` keys cycle through them. Opening the pane starts the
+  issue and comment requests, so switching tabs does not start another request.
+  Three panes is unreadable in an
+  80-column tmux pane, and so is one scroll of everything at once.
 - When the session is pinned to a work item, detail opens full-width with the list
   hidden; `gl` reveals it.
 

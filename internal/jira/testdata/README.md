@@ -66,3 +66,10 @@ own site:
     go run ./tools/capturefixtures internal/jira/testdata
 
 Never commit a fixture without scrubbing it first.
+
+`issuerelated.200` is one work item carrying the fields the detail pane's
+Links, Subtasks and Attachments tabs read. It is written to Atlassian's
+documented v3 issue shape rather than captured, because a genuine one would
+mean recording a real project's dependency graph. It covers both ends of a
+link -- an `outwardIssue` and an `inwardIssue` of the same link type, which is
+what decides whether the relationship reads as "blocks" or "is blocked by".

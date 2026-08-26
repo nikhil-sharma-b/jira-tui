@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -378,5 +379,37 @@ func TestBrowseURL(t *testing.T) {
 		if got := c.BrowseURL("PROJ-1"); got != tt.want {
 			t.Errorf("BrowseURL(%q) = %q, want %q", tt.site, got, tt.want)
 		}
+	}
+}
+
+func TestIssueDecodesLinksSubtasksAndAttachments(t *testing.T) {
+	srv := newFixtureServer(t, map[string]string{"/rest/api/3/issue/ENG-1": "issuerelated.200"})
+	issue, err := newClient(t, srv.URL).Issue(context.Background(), "ENG-1", nil)
+	if err != nil {
+		t.Fatalf("issue: %v", err)
+	}
+
+	// A link is named from the point of view of the item that was fetched, so
+	// the same link type reads differently at either end.
+	want := []jira.IssueLink{
+		{Relation: "blocks", Key: "ENG-2", Summary: "Calibrate the dilithium", Type: "Task",
+			Status: jira.Status{ID: "3", Name: "In Progress", Category: "indeterminate"}},
+		{Relation: "is blocked by", Key: "ENG-3", Summary: "Source a replacement relay", Type: "Bug",
+			Status: jira.Status{ID: "10000", Name: "To Do", Category: "new"}},
+	}
+	if !reflect.DeepEqual(issue.Links, want) {
+		t.Errorf("links = %#v, want %#v", issue.Links, want)
+	}
+
+	wantSubtasks := []jira.Subtask{
+		{Key: "ENG-4", Summary: "Order the capacitor", Type: "Sub-task",
+			Status: jira.Status{ID: "10001", Name: "Done", Category: "done"}},
+	}
+	if !reflect.DeepEqual(issue.Subtasks, wantSubtasks) {
+		t.Errorf("subtasks = %#v, want %#v", issue.Subtasks, wantSubtasks)
+	}
+
+	if len(issue.Attachments) != 1 || issue.Attachments[0].Filename != "trace.log" || issue.Attachments[0].Size != 20480 {
+		t.Errorf("attachments = %#v, want one trace.log of 20480 bytes", issue.Attachments)
 	}
 }

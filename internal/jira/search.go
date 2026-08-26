@@ -130,6 +130,27 @@ func (i *Issue) setField(id string, raw json.RawMessage) (bool, error) {
 		return true, unmarshalTime(raw, &i.Created)
 	case "updated":
 		return true, unmarshalTime(raw, &i.Updated)
+	case "attachment":
+		attachments, err := decodeAttachments(raw)
+		if err != nil {
+			return true, err
+		}
+		i.Attachments = attachments
+		return true, nil
+	case "issuelinks":
+		links, err := decodeLinks(raw)
+		if err != nil {
+			return true, err
+		}
+		i.Links = links
+		return true, nil
+	case "subtasks":
+		subtasks, err := decodeSubtasks(raw)
+		if err != nil {
+			return true, err
+		}
+		i.Subtasks = subtasks
+		return true, nil
 	case "description":
 		if isJSONNull(raw) {
 			i.Description = nil
@@ -195,4 +216,112 @@ func unmarshalTime(raw json.RawMessage, dst *time.Time) error {
 
 func isJSONNull(raw json.RawMessage) bool {
 	return len(raw) == 0 || string(raw) == "null"
+}
+
+// linkWire is one entry of issuelinks. Exactly one of inwardIssue and
+// outwardIssue is present, and which one it is decides which of the link
+// type's two names describes the relationship from here.
+type linkWire struct {
+	Type struct {
+		Name    string `json:"name"`
+		Inward  string `json:"inward"`
+		Outward string `json:"outward"`
+	} `json:"type"`
+	InwardIssue  *linkedIssueWire `json:"inwardIssue"`
+	OutwardIssue *linkedIssueWire `json:"outwardIssue"`
+}
+
+type linkedIssueWire struct {
+	Key    string `json:"key"`
+	Fields struct {
+		Summary   string     `json:"summary"`
+		Status    statusWire `json:"status"`
+		IssueType struct {
+			Name string `json:"name"`
+		} `json:"issuetype"`
+	} `json:"fields"`
+}
+
+func decodeLinks(raw json.RawMessage) ([]IssueLink, error) {
+	if isJSONNull(raw) {
+		return nil, nil
+	}
+	var wires []linkWire
+	if err := json.Unmarshal(raw, &wires); err != nil {
+		return nil, err
+	}
+	var links []IssueLink
+	for _, wire := range wires {
+		other, relation := wire.OutwardIssue, wire.Type.Outward
+		if other == nil {
+			other, relation = wire.InwardIssue, wire.Type.Inward
+		}
+		if other == nil {
+			continue
+		}
+		if relation == "" {
+			relation = wire.Type.Name
+		}
+		links = append(links, IssueLink{
+			Relation: relation,
+			Key:      other.Key,
+			Summary:  other.Fields.Summary,
+			Status:   Status{ID: other.Fields.Status.ID, Name: other.Fields.Status.Name, Category: other.Fields.Status.Category.Key},
+			Type:     other.Fields.IssueType.Name,
+		})
+	}
+	return links, nil
+}
+
+func decodeSubtasks(raw json.RawMessage) ([]Subtask, error) {
+	if isJSONNull(raw) {
+		return nil, nil
+	}
+	var wires []linkedIssueWire
+	if err := json.Unmarshal(raw, &wires); err != nil {
+		return nil, err
+	}
+	var subtasks []Subtask
+	for _, wire := range wires {
+		subtasks = append(subtasks, Subtask{
+			Key:     wire.Key,
+			Summary: wire.Fields.Summary,
+			Status:  Status{ID: wire.Fields.Status.ID, Name: wire.Fields.Status.Name, Category: wire.Fields.Status.Category.Key},
+			Type:    wire.Fields.IssueType.Name,
+		})
+	}
+	return subtasks, nil
+}
+
+// attachmentWire is an attachment as it arrives. Only the timestamp needs
+// help: Jira's offset has no colon, so time.Time's own unmarshaller rejects it.
+type attachmentWire struct {
+	ID       string          `json:"id"`
+	Filename string          `json:"filename"`
+	MimeType string          `json:"mimeType"`
+	Size     int64           `json:"size"`
+	Created  json.RawMessage `json:"created"`
+	Author   *User           `json:"author"`
+}
+
+func decodeAttachments(raw json.RawMessage) ([]Attachment, error) {
+	if isJSONNull(raw) {
+		return nil, nil
+	}
+	var wires []attachmentWire
+	if err := json.Unmarshal(raw, &wires); err != nil {
+		return nil, err
+	}
+	var attachments []Attachment
+	for _, wire := range wires {
+		attachment := Attachment{
+			ID: wire.ID, Filename: wire.Filename, MimeType: wire.MimeType,
+			Size: wire.Size, Author: wire.Author,
+		}
+		if err := unmarshalTime(wire.Created, &attachment.Created); err != nil {
+			return nil, err
+		}
+		attachments = append(attachments, attachment)
+	}
+	return attachments, nil
 }

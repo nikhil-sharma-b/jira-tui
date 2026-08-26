@@ -19,6 +19,7 @@ func TestPinnedSessionStartsOnLiveFullWidthDetail(t *testing.T) {
 	}
 	d.flush()
 
+	d.keys("]")
 	if view := d.view(); !strings.Contains(view, "Key: ENG-1") || d.split() {
 		t.Errorf("pinned detail did not replace the full-width loader:\n%s", view)
 	}
@@ -65,7 +66,7 @@ func TestSemanticPaneJumpsTargetTheNamedPane(t *testing.T) {
 	}
 }
 
-func TestGcAddressesCommentsFromListSplitZoomAndPin(t *testing.T) {
+func TestTabCyclingFocusesDetailFromListSplitZoomAndPin(t *testing.T) {
 	issue := detailedIssue()
 	issue.Description = longDescription()
 	comment := jira.Comment{
@@ -77,18 +78,17 @@ func TestGcAddressesCommentsFromListSplitZoomAndPin(t *testing.T) {
 		d := newDriver(t, &fakeClient{issues: []jira.Issue{issue}, comments: map[string][]jira.Comment{"ENG-1": {comment}}}, testConfig(t, nil))
 		d.send(keyMsg("enter"))
 		d.flush()
-		d.keys("g", "l", "g", "c")
+		d.keys("g", "l", "]", "]")
 		if !strings.Contains(d.view(), "Comments") || !strings.Contains(d.view(), "Directly addressed comment") {
-			t.Errorf("gc did not address comments from list focus:\n%s", d.view())
+			t.Errorf("] did not cycle to comments from list focus:\n%s", d.view())
 		}
 	})
 
 	t.Run("zoomed detail", func(t *testing.T) {
 		d := newDriver(t, &fakeClient{issues: []jira.Issue{issue}, comments: map[string][]jira.Comment{"ENG-1": {comment}}}, testConfig(t, nil))
-		d.keys("enter", "ctrl+w", "o", "g", "c")
-		// The first line inside the pane's frame, past the frame's own top edge.
-		if first := strings.TrimSpace(strings.Trim(strings.Split(d.view(), "\n")[1], "│")); first != "Comments" {
-			t.Errorf("gc did not put comments at the top of zoomed detail, first line %q:\n%s", first, d.view())
+		d.keys("enter", "ctrl+w", "o", "]", "]")
+		if first := firstDetailLine(d.view()); !strings.Contains(first, "Mia Krystof") {
+			t.Errorf("] did not put comments at the top of zoomed detail, first line %q:\n%s", first, d.view())
 		}
 	})
 
@@ -96,19 +96,18 @@ func TestGcAddressesCommentsFromListSplitZoomAndPin(t *testing.T) {
 		client := &fakeClient{issues: []jira.Issue{issue}, comments: map[string][]jira.Comment{"ENG-1": {comment}}}
 		d := newPausedDriver(t, ui.Options{Client: client, Config: testConfig(t, nil), Pin: "ENG-1"})
 		d.flush()
-		d.keys("g", "c")
-		// The first line inside the pane's frame, past the frame's own top edge.
-		if first := strings.TrimSpace(strings.Trim(strings.Split(d.view(), "\n")[1], "│")); first != "Comments" {
-			t.Errorf("gc did not put comments at the top of pinned detail, first line %q:\n%s", first, d.view())
+		d.keys("]", "]")
+		if first := firstDetailLine(d.view()); !strings.Contains(first, "Mia Krystof") {
+			t.Errorf("] did not put comments at the top of pinned detail, first line %q:\n%s", first, d.view())
 		}
 	})
 }
 
-func TestGcWithoutAnOpenDetailIsANoop(t *testing.T) {
+func TestTabCyclingWithoutAnOpenDetailIsANoop(t *testing.T) {
 	d := listWith(t, 2)
-	d.keys("g", "c", "j")
+	d.keys("]", "j")
 	if got := d.selected(); got != "ENG-2" {
-		t.Errorf("gc without detail changed normal list motion; selection = %s", got)
+		t.Errorf("] without detail changed normal list motion; selection = %s", got)
 	}
 }
 
@@ -118,7 +117,7 @@ func TestGlRevealsPinnedListWithoutRefetchingDetail(t *testing.T) {
 	d := newPausedDriver(t, ui.Options{Client: client, Config: testConfig(t, nil), Pin: "ENG-1"})
 	d.flush()
 
-	d.keys("g", "l")
+	d.keys("]", "g", "l")
 	if view := d.view(); !d.split() || !strings.Contains(view, "Key: ENG-1") || !strings.Contains(view, "Summary") {
 		t.Errorf("gl did not reveal the list beside the pinned detail:\n%s", view)
 	}
@@ -154,7 +153,7 @@ func TestZoomTogglesTheFocusedPaneAndRestoresSplit(t *testing.T) {
 	}
 
 	d.keys("ctrl+w", "o")
-	if view := d.view(); d.split() || strings.Contains(view, "Summary") || !strings.Contains(view, "Key: ENG-1") {
+	if view := d.view(); d.split() || strings.Contains(view, "Summary") || !strings.Contains(view, "ENG-1") {
 		t.Errorf("detail did not zoom full width:\n%s", view)
 	}
 	if !strings.Contains(d.view(), "This sentence fits at full width but has to wrap inside the narrower detail pane.") {
@@ -178,7 +177,7 @@ func TestZoomTogglesTheFocusedPaneAndRestoresSplit(t *testing.T) {
 func TestJumplistMovesLiveAndTruncatesForwardHistory(t *testing.T) {
 	client := &fakeClient{issues: sampleIssues(3)}
 	d := newDriver(t, client, testConfig(t, nil))
-	d.keys("enter", "g", "l", "j", "enter")
+	d.keys("enter", "]", "g", "l", "j", "enter")
 
 	d.keys("ctrl+o")
 	if !strings.Contains(d.view(), "Key: ENG-1") {
@@ -213,7 +212,7 @@ func TestJumplistEndsAreNoOps(t *testing.T) {
 		t.Errorf("back before the first visit fetched again: %v", client.issueRequests())
 	}
 
-	d.keys("g", "l", "j", "enter", "9", "ctrl+o")
+	d.keys("]", "g", "l", "j", "enter", "9", "ctrl+o")
 	if !strings.Contains(d.view(), "Key: ENG-1") {
 		t.Errorf("counted back did not stop at the first visit:\n%s", d.view())
 	}
@@ -227,7 +226,7 @@ func TestJumplistEndsAreNoOps(t *testing.T) {
 func TestClosingFocusedPaneLeavesTheOtherPane(t *testing.T) {
 	issue := detailedIssue()
 	d := newDriver(t, &fakeClient{issues: []jira.Issue{issue}}, testConfig(t, nil))
-	d.keys("enter", "g", "l", "q")
+	d.keys("enter", "]", "g", "l", "q")
 	if view := d.view(); d.split() || strings.Contains(view, "Summary") || !strings.Contains(view, "Key: ENG-1") {
 		t.Errorf("closing the list did not leave detail full width:\n%s", view)
 	}
@@ -243,7 +242,7 @@ func TestClosingAZoomedPaneRestoresTheOtherPane(t *testing.T) {
 		t.Run(focus, func(t *testing.T) {
 			issue := detailedIssue()
 			d := newDriver(t, &fakeClient{issues: []jira.Issue{issue}}, testConfig(t, nil))
-			d.keys("enter")
+			d.keys("enter", "]")
 			if focus == "list" {
 				d.keys("g", "l")
 			}
@@ -269,6 +268,16 @@ func longDescription() jira.RawDocument {
 		paragraphs = append(paragraphs, `{"type":"paragraph","content":[{"type":"text","text":"Detail line `+string(r)+`"}]}`)
 	}
 	return jira.RawDocument(`{"type":"doc","version":1,"content":[` + strings.Join(paragraphs, ",") + `]}`)
+}
+
+// firstDetailLine is the first line of the pane's body: past the frame's top
+// edge and past the tab strip and the rule under it.
+func firstDetailLine(view string) string {
+	lines := strings.Split(view, "\n")
+	if len(lines) < 4 {
+		return ""
+	}
+	return strings.TrimSpace(strings.Trim(lines[3], "│"))
 }
 
 func longCommentBody() jira.RawDocument {

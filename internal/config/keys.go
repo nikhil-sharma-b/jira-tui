@@ -28,12 +28,11 @@ const (
 	ActionPaneRight Action = "pane_right"
 	ActionPaneZoom  Action = "pane_zoom"
 
-	// Semantic jumps. These exist so focus is never cycled with Tab: every
-	// pane is reachable by one chord from anywhere in normal mode.
-	ActionGoList        Action = "go_list"
-	ActionGoDetail      Action = "go_detail"
-	ActionGoComments    Action = "go_comments"
-	ActionGoAttachments Action = "go_attachments"
+	// Pane and detail-tab navigation. These keep Tab free for text input.
+	ActionGoList   Action = "go_list"
+	ActionGoDetail Action = "go_detail"
+	ActionPrevTab  Action = "previous_tab"
+	ActionNextTab  Action = "next_tab"
 
 	ActionSearchInPane Action = "search_in_pane"
 	ActionSearchNext   Action = "search_next"
@@ -98,10 +97,10 @@ func DefaultKeymap() Keymap {
 		ActionPaneRight: "ctrl+w l",
 		ActionPaneZoom:  "ctrl+w o",
 
-		ActionGoList:        "gl",
-		ActionGoDetail:      "gd",
-		ActionGoComments:    "gc",
-		ActionGoAttachments: "ga",
+		ActionGoList:   "gl",
+		ActionGoDetail: "gd",
+		ActionPrevTab:  "[",
+		ActionNextTab:  "]",
 
 		ActionSearchInPane: "/",
 		ActionSearchNext:   "n",

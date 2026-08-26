@@ -543,8 +543,11 @@ func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
 	case config.ActionGoDetail:
 		m.goDetail()
 		return nil
-	case config.ActionGoComments:
-		m.goComments()
+	case config.ActionPrevTab:
+		m.cycleTab(-1)
+		return nil
+	case config.ActionNextTab:
+		m.cycleTab(1)
 		return nil
 	case config.ActionJumpBack:
 		return m.jump(-1, count)

@@ -68,7 +68,7 @@ func TestCommentsRenderAfterDescriptionWithMetadataAndADF(t *testing.T) {
 	}
 	d := newDriver(t, client, testConfig(t, nil))
 	d.send(tea.WindowSizeMsg{Width: 100, Height: 40})
-	d.keys("enter")
+	d.keys("enter", "]", "]")
 
 	view := d.view()
 	for _, want := range []string{
@@ -79,8 +79,8 @@ func TestCommentsRenderAfterDescriptionWithMetadataAndADF(t *testing.T) {
 			t.Errorf("comments do not show %q:\n%s", want, view)
 		}
 	}
-	if description, comments := strings.Index(view, "Description"), strings.Index(view, "Comments"); description < 0 || comments <= description {
-		t.Errorf("comments are not after description:\n%s", view)
+	if strings.Contains(view, "Description") {
+		t.Errorf("the Comments tab is showing the description too:\n%s", view)
 	}
 	if first, second := strings.Index(view, "Replace the relay"), strings.Index(view, "Second comment"); first < 0 || second <= first {
 		t.Errorf("comments are not oldest first:\n%s", view)
@@ -90,7 +90,7 @@ func TestCommentsRenderAfterDescriptionWithMetadataAndADF(t *testing.T) {
 func TestNoCommentsIsExplicit(t *testing.T) {
 	issue := detailedIssue()
 	d := newDriver(t, &fakeClient{issues: []jira.Issue{issue}}, testConfig(t, nil))
-	d.keys("enter")
+	d.keys("enter", "]", "]")
 
 	if !strings.Contains(d.view(), "No comments.") {
 		t.Errorf("empty comments have no explanation:\n%s", d.view())
@@ -105,9 +105,16 @@ func TestCommentFailureKeepsTheLoadedIssueReadable(t *testing.T) {
 	}
 	d := newDriver(t, client, testConfig(t, nil))
 	d.keys("enter")
+	info := d.view()
+	for _, want := range []string{"Repair the flux capacitor", "Diagnosis"} {
+		if !strings.Contains(info, want) {
+			t.Errorf("comment failure lost the loaded issue: no %q:\n%s", want, info)
+		}
+	}
 
+	d.keys("]", "]")
 	view := d.view()
-	for _, want := range []string{"Repair the flux capacitor", "## Diagnosis", "Comments could not be loaded.", "comments endpoint failed"} {
+	for _, want := range []string{"Comments could not be loaded.", "comments endpoint failed"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("comment failure view does not show %q:\n%s", want, view)
 		}
@@ -141,10 +148,10 @@ func TestLongCommentsScrollInTheDetailViewport(t *testing.T) {
 	}
 	d := newDriver(t, &fakeClient{issues: []jira.Issue{issue}, comments: map[string][]jira.Comment{"ENG-1": comments}}, testConfig(t, nil))
 	d.send(tea.WindowSizeMsg{Width: 80, Height: 12})
-	d.keys("enter", "g", "c")
+	d.keys("enter", "]", "]")
 
 	if strings.Contains(d.view(), "Comment body X") {
-		t.Fatalf("gc started at the end of the comment section:\n%s", d.view())
+		t.Fatalf("the Comments tab started at the end:\n%s", d.view())
 	}
 	d.keys("G")
 	if !strings.Contains(d.view(), "Comment body X") {
@@ -163,7 +170,7 @@ func TestCommentLayoutRewrapsAfterPaneAndTerminalResizes(t *testing.T) {
 	d := newDriver(t, &fakeClient{issues: []jira.Issue{issue}, comments: map[string][]jira.Comment{"ENG-1": {comment}}}, testConfig(t, nil))
 	d.keys("enter")
 
-	for _, keys := range [][]string{{"g", "c"}, {"ctrl+w", "o", "g", "c"}, {"ctrl+w", "o", "g", "c"}} {
+	for _, keys := range [][]string{{"]", "]"}, {"ctrl+w", "o"}, {"ctrl+w", "o"}} {
 		d.keys(keys...)
 		if !strings.Contains(d.view(), "Comments") || !strings.Contains(d.view(), "A comment with enough words") {
 			t.Errorf("a layout change lost the comments section:\n%s", d.view())
@@ -171,7 +178,6 @@ func TestCommentLayoutRewrapsAfterPaneAndTerminalResizes(t *testing.T) {
 	}
 	for _, width := range []int{60, 100, 42} {
 		d.send(tea.WindowSizeMsg{Width: width, Height: 22})
-		d.keys("g", "c")
 		for _, line := range d.lines() {
 			if got := ansi.StringWidth(line); got > width {
 				t.Errorf("at width %d a line is %d columns wide: %q", width, got, line)
@@ -230,7 +236,7 @@ func TestOldCommentResponseCannotReplaceReopenedDetail(t *testing.T) {
 		Body: jira.RawDocument(`{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"Fresh comment"}]}]}`),
 	}}}
 	client.mu.Unlock()
-	d.keys("enter", "g", "c")
+	d.keys("enter", "]", "]")
 	if !strings.Contains(d.view(), "Fresh comment") {
 		t.Fatalf("the reopened pane did not render fresh comments:\n%s", d.view())
 	}
@@ -314,10 +320,18 @@ func TestEnterOpensLiveDetailBesideTheList(t *testing.T) {
 	d.keys("enter")
 
 	view := d.view()
+	for _, want := range []string{"ENG-1", "Repair the flux capacitor", "Diagnosis", "• Replace the relay"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("the Info tab does not show %q:\n%s", want, view)
+		}
+	}
+
+	d.keys("]")
+	view = d.view()
 	for _, want := range []string{
-		"ENG-1", "Repair the flux capacitor", "In Progress", "Ada Lovelace",
+		"ENG-1", "In Progress", "Ada Lovelace",
 		"Grace Hopper", "Highest", "Bug", "time-travel, urgent",
-		"2026-08-20 09:30 UTC", "2026-08-25 11:45 UTC", "## Diagnosis", "• Replace the relay",
+		"2026-08-20 09:30 UTC", "2026-08-25 11:45 UTC",
 	} {
 		if !strings.Contains(view, want) {
 			t.Errorf("detail does not show %q:\n%s", want, view)
@@ -412,9 +426,13 @@ func TestCommentLoadingIndicatorAnimatesWithoutHidingDetail(t *testing.T) {
 	result := make(chan tea.Msg, 1)
 	go func() { result <- commentCmd() }()
 	<-started
+	if info := d.view(); !strings.Contains(info, "Repair the flux capacitor") {
+		t.Fatalf("comment loading hid the loaded issue:\n%s", info)
+	}
+	d.keys("]", "]")
 	before := d.view()
-	if !strings.Contains(before, "Repair the flux capacitor") || !strings.Contains(before, "Loading comments") {
-		t.Fatalf("comment loading hid the loaded issue:\n%s", before)
+	if !strings.Contains(before, "Loading comments") {
+		t.Fatalf("the Comments tab does not say it is loading:\n%s", before)
 	}
 	d.deliver(tick())
 	if after := d.view(); after == before {
@@ -481,5 +499,108 @@ func TestClosingAndReopeningCannotLetTheOldRequestReplaceTheNewDetail(t *testing
 	d.deliver(<-oldResult)
 	if !strings.Contains(d.view(), "Fresh detail") {
 		t.Errorf("the old cancelled response replaced the reopened detail:\n%s", d.view())
+	}
+}
+
+// relatedIssue is a work item with something in every tab, so that a test can
+// assert on which of them is on screen rather than on whether data arrived.
+func relatedIssue() jira.Issue {
+	issue := detailedIssue()
+	issue.Attachments = []jira.Attachment{{
+		ID: "1", Filename: "trace.log", MimeType: "text/plain", Size: 20480,
+		Author:  &jira.User{DisplayName: "Ada Lovelace"},
+		Created: time.Date(2026, 8, 20, 9, 30, 0, 0, time.UTC),
+	}}
+	issue.Links = []jira.IssueLink{{
+		Relation: "is blocked by", Key: "ENG-9", Summary: "Source a replacement relay",
+		Status: jira.Status{Name: "To Do"}, Type: "Bug",
+	}}
+	issue.Subtasks = []jira.Subtask{{
+		Key: "ENG-4", Summary: "Order the capacitor", Status: jira.Status{Name: "Done"}, Type: "Sub-task",
+	}}
+	return issue
+}
+
+func TestBracketsCycleTabsAndEachTabShowsOnlyItsOwnContent(t *testing.T) {
+	d := newDriver(t, &fakeClient{issues: []jira.Issue{relatedIssue()}}, testConfig(t, nil))
+	d.send(tea.WindowSizeMsg{Width: 110, Height: 30})
+	d.keys("enter")
+
+	tests := []struct {
+		name  string
+		keys  []string
+		want  []string
+		avoid []string
+	}{
+		{name: "Info", want: []string{"Repair the flux capacitor", "Diagnosis"}, avoid: []string{"Reporter:", "trace.log"}},
+		{name: "Details", keys: []string{"]"}, want: []string{"Key: ENG-1", "Reporter: Grace Hopper", "Labels: time-travel, urgent"}, avoid: []string{"Diagnosis"}},
+		{name: "Comments", keys: []string{"]"}, want: []string{"No comments."}, avoid: []string{"Diagnosis", "trace.log"}},
+		{name: "Attachments", keys: []string{"]"}, want: []string{"trace.log", "20.0 kB", "text/plain", "Ada Lovelace"}, avoid: []string{"Diagnosis"}},
+		{name: "Links", keys: []string{"]"}, want: []string{"is blocked by", "ENG-9", "Source a replacement relay", "To Do"}, avoid: []string{"Order the capacitor"}},
+		{name: "Subtasks", keys: []string{"]"}, want: []string{"ENG-4", "Order the capacitor", "Done"}, avoid: []string{"Source a replacement relay"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			d.keys(test.keys...)
+			view := d.view()
+			// The tab strip names every tab, so the assertions are made
+			// against the pane's body rather than against the whole screen.
+			body := strings.Join(d.lines()[3:], "\n")
+			for _, want := range test.want {
+				if !strings.Contains(body, want) {
+					t.Errorf("the %s tab does not show %q:\n%s", test.name, want, view)
+				}
+			}
+			for _, avoid := range test.avoid {
+				if strings.Contains(body, avoid) {
+					t.Errorf("the %s tab is also showing %q:\n%s", test.name, avoid, view)
+				}
+			}
+			if !strings.Contains(view, test.name) {
+				t.Errorf("the tab strip does not name %s:\n%s", test.name, view)
+			}
+		})
+	}
+
+	d.keys("]")
+	if !strings.Contains(strings.Join(d.lines()[3:], "\n"), "Diagnosis") {
+		t.Errorf("] did not wrap from Subtasks to Info:\n%s", d.view())
+	}
+	d.keys("[")
+	if !strings.Contains(strings.Join(d.lines()[3:], "\n"), "Order the capacitor") {
+		t.Errorf("[ did not wrap from Info to Subtasks:\n%s", d.view())
+	}
+}
+
+func TestEmptyTabsSayWhatIsMissing(t *testing.T) {
+	d := newDriver(t, &fakeClient{issues: []jira.Issue{detailedIssue()}}, testConfig(t, nil))
+	d.keys("enter")
+
+	for _, test := range []struct {
+		keys []string
+		want string
+	}{
+		{keys: []string{"]", "]", "]"}, want: "No attachments."},
+		{keys: []string{"]"}, want: "No links."},
+		{keys: []string{"]"}, want: "No subtasks."},
+	} {
+		d.keys(test.keys...)
+		if !strings.Contains(d.view(), test.want) {
+			t.Errorf("an empty tab does not say %q:\n%s", test.want, d.view())
+		}
+	}
+}
+
+func TestATabRemembersWhereItWasLeft(t *testing.T) {
+	issue := detailedIssue()
+	issue.Description = longDescription()
+	d := newDriver(t, &fakeClient{issues: []jira.Issue{issue}}, testConfig(t, nil))
+	d.send(tea.WindowSizeMsg{Width: 90, Height: 16})
+	d.keys("enter", "G")
+	end := d.view()
+
+	d.keys("]", "[")
+	if got := d.view(); got != end {
+		t.Errorf("returning to the Info tab did not return to where it was left:\n%s\nwant:\n%s", got, end)
 	}
 }

@@ -96,12 +96,14 @@ func (m *Model) goDetail() {
 	m.resizePanes()
 }
 
-func (m *Model) goComments() {
+// cycleTab reveals and focuses the detail pane, then moves one tab in the
+// requested direction.
+func (m *Model) cycleTab(delta int) {
 	if !m.detail.open {
 		return
 	}
 	m.goDetail()
-	m.detail.goComments()
+	m.detail.cycleTab(delta)
 }
 
 func (m *Model) moveFocus(target Pane) {

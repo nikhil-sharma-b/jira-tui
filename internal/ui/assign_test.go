@@ -278,7 +278,7 @@ func assignedRow(t *testing.T, d *driver, key string) string {
 func TestAssigningRefetchesTheItemLiveForTheDetailPane(t *testing.T) {
 	client := assignClient()
 	d := assignDriver(t, client)
-	d.keys("enter") // open detail on ENG-1
+	d.keys("enter", "]") // open detail on ENG-1, on its fields
 	issuesBefore := len(client.issueRequests())
 
 	d.keys("space", "a")

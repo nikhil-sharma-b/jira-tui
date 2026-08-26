@@ -1,0 +1,59 @@
+HTTP/1.1 200 OK
+Content-Type: application/json;charset=UTF-8
+
+{
+  "id": "10001",
+  "key": "ENG-1",
+  "fields": {
+    "summary": "Repair the flux capacitor",
+    "attachment": [
+      {
+        "id": "10100",
+        "filename": "trace.log",
+        "mimeType": "text/plain",
+        "size": 20480,
+        "created": "2026-08-20T09:30:00.000+0530",
+        "author": {"accountId": "5b10a2", "displayName": "Ada Lovelace", "active": true}
+      }
+    ],
+    "issuelinks": [
+      {
+        "id": "10200",
+        "type": {"id": "10000", "name": "Blocks", "inward": "is blocked by", "outward": "blocks"},
+        "outwardIssue": {
+          "id": "10002",
+          "key": "ENG-2",
+          "fields": {
+            "summary": "Calibrate the dilithium",
+            "status": {"id": "3", "name": "In Progress", "statusCategory": {"key": "indeterminate"}},
+            "issuetype": {"id": "10001", "name": "Task"}
+          }
+        }
+      },
+      {
+        "id": "10201",
+        "type": {"id": "10000", "name": "Blocks", "inward": "is blocked by", "outward": "blocks"},
+        "inwardIssue": {
+          "id": "10003",
+          "key": "ENG-3",
+          "fields": {
+            "summary": "Source a replacement relay",
+            "status": {"id": "10000", "name": "To Do", "statusCategory": {"key": "new"}},
+            "issuetype": {"id": "10002", "name": "Bug"}
+          }
+        }
+      }
+    ],
+    "subtasks": [
+      {
+        "id": "10004",
+        "key": "ENG-4",
+        "fields": {
+          "summary": "Order the capacitor",
+          "status": {"id": "10001", "name": "Done", "statusCategory": {"key": "done"}},
+          "issuetype": {"id": "10003", "name": "Sub-task"}
+        }
+      }
+    ]
+  }
+}

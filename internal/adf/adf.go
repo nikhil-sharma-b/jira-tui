@@ -92,6 +92,11 @@ func renderBlocks(nodes []Node, opts Options) []string {
 		}
 		if len(lines) > 0 {
 			lines = append(lines, "")
+			// Textual sets a two-line margin above a heading, which is what
+			// gives a jiratui description its air between sections.
+			if n.Type == "heading" {
+				lines = append(lines, "")
+			}
 		}
 		lines = append(lines, block...)
 	}
@@ -121,24 +126,17 @@ func renderBlock(n Node, opts Options) []string {
 	case "paragraph":
 		return wrap(renderInline(n.Content, opts.Plain, opts.Width), opts.Width)
 	case "heading":
-		level := intAttr(n.Attrs, "level", 1)
-		if level < 1 || level > 6 {
-			level = 1
-		}
-		prefix := strings.Repeat("#", level) + " "
-		inlineWidth := opts.Width - lipgloss.Width(prefix)
-		return prefixFirst(wrap(renderInline(n.Content, opts.Plain, inlineWidth), inlineWidth), prefix, opts.Width)
+		return renderHeading(n, opts)
 	case "bulletList", "orderedList":
 		return renderList(n, opts)
 	case "codeBlock":
-		text := ExtractText(n)
-		parts := strings.Split(text, "\n")
-		for i := range parts {
-			parts[i] = "    " + parts[i]
-		}
-		return parts
+		return renderCodeBlock(n, opts)
 	case "blockquote":
-		return prefixEvery(renderBlocks(n.Content, Options{Width: opts.Width - 2, Plain: opts.Plain}), "> ", opts.Width)
+		prefix := "> "
+		if !opts.Plain {
+			prefix = quoteStyle().Render("▌") + " "
+		}
+		return prefixEvery(renderBlocks(n.Content, Options{Width: opts.Width - 2, Plain: opts.Plain}), prefix, opts.Width)
 	case "panel":
 		label := "[" + strings.ToUpper(stringAttr(n.Attrs, "panelType")) + "] "
 		if label == "[] " {
@@ -156,6 +154,113 @@ func renderBlock(n Node, opts Options) []string {
 	default:
 		return wrap(ExtractText(n), opts.Width)
 	}
+}
+
+// The palette mirrors Textual's Markdown widget, the renderer jiratui uses, so
+// a description reads the same in either client: headings carry the accent
+// colour and a per-level style, inline code sits on a warm background, links
+// are underlined blue, and list bullets are coloured.
+var (
+	headingColour  = lipgloss.Color("39")
+	mutedColour    = lipgloss.Color("245")
+	linkColour     = lipgloss.Color("39")
+	codeColour     = lipgloss.Color("215")
+	codeBackground = lipgloss.Color("236")
+)
+
+func codeBlockStyle() lipgloss.Style {
+	return ansiStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("235"))
+}
+func quoteStyle() lipgloss.Style  { return ansiStyle().Foreground(headingColour) }
+func bulletStyle() lipgloss.Style { return ansiStyle().Foreground(headingColour) }
+
+// headingStyle gives each level the weight Textual gives it: h1 bold and
+// centred, h2 underlined, h3 bold, h4 bold underlined, h5 bold, h6 bold muted.
+func headingStyle(level int) lipgloss.Style {
+	style := ansiStyle()
+	switch level {
+	case 1:
+		return style.Foreground(headingColour).Bold(true)
+	case 2:
+		return style.Foreground(headingColour).Underline(true)
+	case 3:
+		return style.Foreground(headingColour).Bold(true)
+	case 4:
+		return style.Bold(true).Underline(true)
+	case 5:
+		return style.Bold(true)
+	default:
+		return style.Foreground(mutedColour).Bold(true)
+	}
+}
+
+func renderHeading(n Node, opts Options) []string {
+	level := intAttr(n.Attrs, "level", 1)
+	if level < 1 || level > 6 {
+		level = 1
+	}
+	if opts.Plain {
+		prefix := strings.Repeat("#", level) + " "
+		inlineWidth := opts.Width - lipgloss.Width(prefix)
+		return prefixFirst(wrap(renderInline(n.Content, true, inlineWidth), inlineWidth), prefix, opts.Width)
+	}
+	lines := wrap(renderInline(n.Content, false, opts.Width), opts.Width)
+	style := headingStyle(level)
+	for i, line := range lines {
+		lines[i] = style.Render(ansi.Strip(line))
+	}
+	if level == 1 && opts.Width > 0 {
+		for i, line := range lines {
+			lines[i] = centre(line, opts.Width)
+		}
+	}
+	return lines
+}
+
+// centre pads a line so an h1 sits in the middle of the pane, the way Textual
+// centres its own h1.
+func centre(line string, width int) string {
+	pad := (width - ansi.StringWidth(line)) / 2
+	if pad <= 0 {
+		return line
+	}
+	return strings.Repeat(" ", pad) + line
+}
+
+// renderCodeBlock draws a fenced block the way Textual draws one: the code
+// indented inside a band of its own background that runs the full width of the
+// pane, with a blank padded row above and below so the block reads as a single
+// object rather than as indented prose.
+func renderCodeBlock(n Node, opts Options) []string {
+	code := strings.Split(ExtractText(n), "\n")
+	const indent = "    "
+	if opts.Plain {
+		for i := range code {
+			code[i] = indent + code[i]
+		}
+		return code
+	}
+
+	width := opts.Width
+	if width <= 0 {
+		for i := range code {
+			code[i] = codeBlockStyle().Render(indent + code[i])
+		}
+		return code
+	}
+
+	// Long lines are truncated rather than wrapped: broken indentation reads
+	// as different code, and the band's right edge has to stay straight.
+	style := codeBlockStyle()
+	lines := []string{style.Render(strings.Repeat(" ", width))}
+	for _, line := range code {
+		line = ansi.Truncate(indent+line, width, "…")
+		if pad := width - ansi.StringWidth(line); pad > 0 {
+			line += strings.Repeat(" ", pad)
+		}
+		lines = append(lines, style.Render(line))
+	}
+	return append(lines, style.Render(strings.Repeat(" ", width)))
 }
 
 func renderTable(table Node, opts Options) []string {
@@ -279,6 +384,9 @@ func renderList(list Node, opts Options) []string {
 			prefix = fmt.Sprintf("%d. ", start+i)
 		}
 		prefixWidth := lipgloss.Width(prefix)
+		if !opts.Plain {
+			prefix = bulletStyle().Render(strings.TrimRight(prefix, " ")) + " "
+		}
 		itemOpts := Options{Width: opts.Width - prefixWidth, Plain: opts.Plain}
 
 		var itemLines []string
@@ -355,11 +463,11 @@ func renderInline(nodes []Node, plain bool, width int) string {
 				case "em":
 					style = style.Italic(true)
 				case "code":
-					style = style.Reverse(true)
+					style = style.Foreground(codeColour).Background(codeBackground)
 				case "strike":
 					style = style.Strikethrough(true)
 				case "link":
-					style = style.Underline(true)
+					style = style.Underline(true).Foreground(linkColour)
 					link = stringAttr(mark.Attrs, "href")
 				}
 			}

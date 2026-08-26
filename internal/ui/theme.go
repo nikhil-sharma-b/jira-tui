@@ -35,3 +35,27 @@ var (
 	borderStyle = lipgloss.NewStyle().Foreground(accent)
 	titleStyle  = lipgloss.NewStyle().Foreground(accent).Bold(true)
 )
+
+var (
+	// summaryStyle is the work item's own title, at the top of the detail pane.
+	summaryStyle = lipgloss.NewStyle().Bold(true)
+	// sectionStyle names a block of the detail pane: Description, Comments.
+	sectionStyle = lipgloss.NewStyle().Foreground(accent).Bold(true).Underline(true)
+	// commentAuthorStyle marks who wrote a comment.
+	commentAuthorStyle = lipgloss.NewStyle().Foreground(keyColor).Bold(true)
+)
+
+var (
+	// fieldLabelStyle names a field in the Details tab; the value beside it is
+	// left plain so the eye lands on the value rather than on the label.
+	fieldLabelStyle = lipgloss.NewStyle().Foreground(noteColor)
+	// itemKeyStyle marks the identity of a listed thing that is not a work
+	// item -- an attachment's filename.
+	itemKeyStyle = lipgloss.NewStyle().Foreground(keyColor)
+	// The tab strip: the active tab is reversed out of the accent colour and
+	// carries a bright rule; the rest are quiet, with a quiet rule.
+	activeTabStyle       = lipgloss.NewStyle().Foreground(selectionFG).Background(selectionBG).Bold(true)
+	inactiveTabStyle     = lipgloss.NewStyle().Foreground(noteColor)
+	activeTabRuleStyle   = lipgloss.NewStyle().Foreground(accent)
+	inactiveTabRuleStyle = lipgloss.NewStyle().Foreground(noteColor)
+)
