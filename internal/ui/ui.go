@@ -178,9 +178,15 @@ type Model struct {
 
 	now func() time.Time
 
-	editorCommand             []string
-	editorExec                EditorExec
-	editorRequest             uint64
+	editorCommand []string
+	editorExec    EditorExec
+	editorRequest uint64
+	// editorOpening records that an editor has been asked for and has not yet
+	// taken the terminal. It is the window Esc can still cancel in, and it is
+	// deliberately narrow: once the editor has opened, what comes back is
+	// written text rather than an intention.
+	editorOpening bool
+
 	drafts                    map[draftKey]string
 	pendingDescription        string
 	pendingDescriptionRequest uint64
@@ -488,19 +494,27 @@ func (m *Model) closePrompt() {
 }
 
 func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
-	// The overlay gets first refusal, so that the help key and Esc mean the
-	// same thing while it is up as they do anywhere else.
+	if action == config.ActionNormalMode {
+		// Esc is resolved ahead of every widget, the overlay included: dismissing
+		// the overlay is one of the things it does rather than all it does, since
+		// an overlay over a picker or a pending editor would otherwise spend the
+		// keypress the user meant for what is underneath.
+		//
+		// It abandons whatever was being typed, chosen or waited on and leaves
+		// everything else -- the rows, the query, the search pattern -- alone.
+		// Nothing is applied on the way out.
+		m.help.Hide()
+		m.cancelPendingWrite()
+		m.closePicker()
+		m.closePrompt()
+		return nil
+	}
+	// Every other action the overlay answers to -- only its own key -- gets
+	// first refusal, so what is behind the overlay is not driven blind.
 	if m.help.HandleAction(action) {
 		return nil
 	}
 	switch action {
-	case config.ActionNormalMode:
-		// Esc abandons whatever was being typed or chosen and leaves everything
-		// else -- the rows, the query, the search pattern -- alone. Nothing is
-		// applied on the way out.
-		m.closePicker()
-		m.closePrompt()
-		return nil
 	case config.ActionCommandline:
 		return m.openPrompt(m.newCommandPrompt())
 	case config.ActionSearchInPane:

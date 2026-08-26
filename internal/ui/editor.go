@@ -74,6 +74,29 @@ func (m *Model) beginWrite(kind writeKind) tea.Cmd {
 	return m.openEditor(kind, key)
 }
 
+// cancelPendingWrite abandons an editor that has been asked for but has not
+// opened yet -- a description edit still waiting on its live read, or a scratch
+// file still being created. Both windows are short, and both end with the
+// terminal being handed away, so Esc landing in one of them has to mean what it
+// means everywhere else rather than an editor appearing a moment later.
+//
+// It deliberately stops there. Once the editor has opened, what comes back is
+// text the user wrote and saved, and the window between quitting the editor and
+// the write landing is exactly where a keystroke struck at a returning terminal
+// arrives. Cancelling there would discard work silently, which is a worse
+// outcome than an Esc that did nothing.
+func (m *Model) cancelPendingWrite() {
+	m.pendingDescription = ""
+	if !m.editorOpening {
+		return
+	}
+	// The counter is what every in-flight step checks itself against, so moving
+	// it is the whole of the cancellation: the scratch file that lands after it
+	// is removed rather than opened.
+	m.editorOpening = false
+	m.editorRequest++
+}
+
 func (m *Model) openEditor(kind writeKind, key string) tea.Cmd {
 	initial := m.drafts[draftKey{kind: kind, key: key}]
 	if initial == "" && kind == writeDescription && m.detail.issue != nil && m.detail.issue.Key == key {
@@ -85,6 +108,7 @@ func (m *Model) openEditor(kind writeKind, key string) tea.Cmd {
 		}
 	}
 	m.editorRequest++
+	m.editorOpening = true
 	operation := editorOperation{
 		request: m.editorRequest, detailRequest: m.detail.request,
 		kind: kind, key: key, initial: initial,
@@ -119,6 +143,9 @@ func (m *Model) handleEditorStart(msg editorStartMsg) tea.Cmd {
 		}
 		return nil
 	}
+	// From here the terminal is handed away and whatever comes back is text the
+	// user wrote, so this operation has left the window Esc can cancel.
+	m.editorOpening = false
 	if msg.err != nil {
 		m.status = fmt.Errorf("open editor scratch file: %w", msg.err)
 		return nil

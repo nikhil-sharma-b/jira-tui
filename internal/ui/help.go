@@ -28,15 +28,13 @@ func (h *Help) Visible() bool { return h.visible }
 func (h *Help) Hide() { h.visible = false }
 
 // HandleAction gives the overlay first refusal on an action, reporting whether
-// it consumed it. The overlay answers to exactly two: its own key toggles it,
-// and Esc dismisses it. Everything else belongs to the pane underneath.
+// it consumed it. The overlay answers to exactly one: its own key toggles it.
+// Everything else belongs to the pane underneath -- Esc included, which is
+// resolved ahead of every widget and calls Hide as one part of what it does,
+// so that an Esc struck under the overlay is not spent on the overlay alone.
 func (h *Help) HandleAction(a config.Action) bool {
-	switch {
-	case a == config.ActionHelp:
+	if a == config.ActionHelp {
 		h.visible = !h.visible
-		return true
-	case a == config.ActionNormalMode && h.visible:
-		h.visible = false
 		return true
 	}
 	return false

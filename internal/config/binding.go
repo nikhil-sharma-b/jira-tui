@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -162,8 +163,16 @@ func Compile(km Keymap, leader string) (*Bindings, error) {
 // into a key that silently does nothing, which is exactly what reporting
 // collisions at load exists to prevent.
 func reserved(tokens []string, a Action) string {
-	if tokens[0] == "esc" && a != ActionNormalMode {
-		return fmt.Sprintf("esc always returns to normal mode; it cannot be bound to %q", string(a))
+	// Esc is resolved ahead of the table wherever it appears, so the only
+	// binding it can be part of is the whole of the one it already performs.
+	// Anything else compiles into keys that can never be reached.
+	if slices.Contains(tokens, "esc") {
+		if len(tokens) > 1 {
+			return "esc always returns to normal mode; it cannot appear in a sequence"
+		}
+		if a != ActionNormalMode {
+			return fmt.Sprintf("esc always returns to normal mode; it cannot be bound to %q", string(a))
+		}
 	}
 	if len(tokens[0]) == 1 && tokens[0][0] >= '1' && tokens[0][0] <= '9' {
 		return fmt.Sprintf("%q starts a count, so a binding cannot begin with it", tokens[0])

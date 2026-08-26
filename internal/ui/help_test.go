@@ -34,15 +34,19 @@ func TestHelpIsToggledByItsOwnAction(t *testing.T) {
 	}
 }
 
-func TestHelpIsDismissedByEsc(t *testing.T) {
+// Esc is resolved ahead of every widget, so the overlay does not consume it:
+// it is dismissed by the same Esc that clears everything else, which is why
+// an overlay cannot absorb a keypress meant for what is behind it.
+func TestHelpDoesNotConsumeEsc(t *testing.T) {
 	h := help(t, " ", nil)
 	h.HandleAction(config.ActionHelp)
 
-	if !h.HandleAction(config.ActionNormalMode) {
-		t.Fatal("normal_mode was not consumed while the overlay was up")
+	if h.HandleAction(config.ActionNormalMode) {
+		t.Error("the overlay consumed normal_mode; Esc belongs to everything at once")
 	}
+	h.Hide()
 	if h.Visible() {
-		t.Error("Esc did not dismiss the overlay")
+		t.Error("Hide did not dismiss the overlay")
 	}
 }
 

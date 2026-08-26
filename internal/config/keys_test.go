@@ -229,6 +229,21 @@ func TestCompileRefusesBindingsOnReservedKeys(t *testing.T) {
 			"esc",
 		},
 		{
+			// Esc resolves before a sequence can be continued, so the "x" here
+			// would never be reached -- including when the sequence is bound to
+			// the action Esc already performs.
+			"esc starting a sequence",
+			config.Keymap{config.ActionNormalMode: "esc x"},
+			"sequence",
+		},
+		{
+			// Nor at the end of one: Esc ends the sequence instead of
+			// continuing it, so this binding is dead too.
+			"esc ending a sequence",
+			config.Keymap{config.ActionClosePane: "ctrl+w esc"},
+			"sequence",
+		},
+		{
 			// 1-9 are swallowed as counts, so this key would be dead too.
 			"count digit",
 			config.Keymap{config.ActionReload: "5"},
