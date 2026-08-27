@@ -296,19 +296,15 @@ func renderTable(table Node, opts Options) []string {
 			widths[column] = max(widths[column], ansi.StringWidth(cell))
 		}
 	}
-	tableWidth := 1 + 3*columns
-	for _, width := range widths {
-		tableWidth += width
-	}
-	if opts.Width > 0 && tableWidth > opts.Width {
+	if !fitTableWidths(widths, opts.Width) {
 		return renderStackedTable(rows, header, opts.Width)
 	}
 
 	var lines []string
 	lines = append(lines, tableBorder("┌", "┬", "┐", widths))
 	for rowIndex, row := range rows {
-		var line strings.Builder
-		line.WriteString("│")
+		cells := make([][]string, columns)
+		height := 1
 		for column := range columns {
 			cell := ""
 			if column < len(row) {
@@ -317,15 +313,63 @@ func renderTable(table Node, opts Options) []string {
 			if rowIndex == 0 && header && !opts.Plain {
 				cell = ansiStyle().Bold(true).Render(cell)
 			}
-			line.WriteString(" " + padRight(cell, widths[column]) + " │")
+			cells[column] = wrap(cell, widths[column])
+			height = max(height, len(cells[column]))
 		}
-		lines = append(lines, line.String())
+		for lineIndex := range height {
+			var line strings.Builder
+			line.WriteString("│")
+			for column := range columns {
+				cell := ""
+				if lineIndex < len(cells[column]) {
+					cell = cells[column][lineIndex]
+				}
+				line.WriteString(" " + padRight(cell, widths[column]) + " │")
+			}
+			lines = append(lines, line.String())
+		}
 		if rowIndex < len(rows)-1 {
 			lines = append(lines, tableBorder("├", "┼", "┤", widths))
 		}
 	}
 	lines = append(lines, tableBorder("└", "┴", "┘", widths))
 	return lines
+}
+
+// minTableColumnWidth is the narrowest a column may be squeezed to before the
+// table is abandoned in favour of the stacked layout.
+const minTableColumnWidth = 8
+
+// fitTableWidths shrinks the widest columns until the table fits in width,
+// reporting whether that was possible. Cells wrap inside the columns it leaves.
+func fitTableWidths(widths []int, width int) bool {
+	if width <= 0 {
+		return true
+	}
+	total := 1 + 3*len(widths)
+	for _, columnWidth := range widths {
+		total += columnWidth
+	}
+	if total <= width {
+		return true
+	}
+	if 1+3*len(widths)+minTableColumnWidth*len(widths) > width {
+		return false
+	}
+	for total > width {
+		widest := 0
+		for column, columnWidth := range widths {
+			if columnWidth > widths[widest] {
+				widest = column
+			}
+		}
+		if widths[widest] <= minTableColumnWidth {
+			return false
+		}
+		widths[widest]--
+		total--
+	}
+	return true
 }
 
 func renderStackedTable(rows [][]string, header bool, width int) []string {

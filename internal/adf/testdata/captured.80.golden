@@ -50,25 +50,19 @@ example example, example example example example example example example
 
 ## example
 
-example: example
-example: **example**
-example: example
-example: example example
-
-example: example
-example: example example example
-example: example
-example: example example example example
-
-example: example
-example: example example
-example: example-example
-example: example example
-
-example: example
-example: [attachment: example-file.png]
-example: example
-example: example example example example
+┌──────────┬───────────────────────┬──────────────────┬────────────────────────┐
+│ example  │ example               │ example          │ example                │
+├──────────┼───────────────────────┼──────────────────┼────────────────────────┤
+│ example  │ **example**           │ example          │ example example        │
+├──────────┼───────────────────────┼──────────────────┼────────────────────────┤
+│ example  │ example example       │ example          │ example example        │
+│          │ example               │                  │ example example        │
+├──────────┼───────────────────────┼──────────────────┼────────────────────────┤
+│ example  │ example example       │ example-example  │ example example        │
+├──────────┼───────────────────────┼──────────────────┼────────────────────────┤
+│ example  │ [attachment: example- │ example          │ example example        │
+│          │ file.png]             │                  │ example example        │
+└──────────┴───────────────────────┴──────────────────┴────────────────────────┘
 
 example:
 
