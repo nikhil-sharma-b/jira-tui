@@ -63,6 +63,7 @@ var helpCategories = []category{
 		{config.ActionSearchNext, "next match"},
 		{config.ActionSearchPrev, "previous match"},
 		{config.ActionClosePane, "close pane"},
+		{config.ActionQuit, "quit jt, from anywhere"},
 		{config.ActionReload, "reload view"},
 		{config.ActionHelp, "this help"},
 	}},

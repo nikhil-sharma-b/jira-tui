@@ -555,6 +555,8 @@ func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
 		return m.moveToMatch(-1, max(count, 1), false)
 	case config.ActionClosePane:
 		return m.closePane()
+	case config.ActionQuit:
+		return tea.Quit
 	case config.ActionOpen:
 		return m.openDetail()
 	case config.ActionPaneLeft:

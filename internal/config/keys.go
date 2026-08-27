@@ -41,6 +41,7 @@ const (
 	ActionCommandline Action = "commandline"
 	ActionNormalMode  Action = "normal_mode"
 	ActionClosePane   Action = "close_pane"
+	ActionQuit        Action = "quit"
 	ActionReload      Action = "reload"
 	ActionHelp        Action = "help"
 )
@@ -109,6 +110,7 @@ func DefaultKeymap() Keymap {
 		ActionCommandline: ":",
 		ActionNormalMode:  "esc",
 		ActionClosePane:   "q",
+		ActionQuit:        "Q",
 		ActionReload:      "R",
 		ActionHelp:        "?",
 
