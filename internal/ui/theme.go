@@ -65,4 +65,6 @@ var (
 	inactiveTabStyle     = lipgloss.NewStyle().Foreground(noteColor)
 	activeTabRuleStyle   = lipgloss.NewStyle().Foreground(accent)
 	inactiveTabRuleStyle = lipgloss.NewStyle().Foreground(noteColor)
+	// The quiet rule drawn between one comment and the next.
+	commentSeparatorStyle = lipgloss.NewStyle().Foreground(noteColor)
 )

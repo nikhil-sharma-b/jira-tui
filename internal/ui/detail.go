@@ -288,7 +288,7 @@ func (d *detailPane) renderComments() []string {
 	var lines []string
 	for index, comment := range d.comments {
 		if index > 0 {
-			lines = append(lines, "")
+			lines = append(lines, "", commentSeparator(d.width), "")
 		}
 		lines = append(lines, renderComment(comment, d.width)...)
 	}
@@ -361,6 +361,15 @@ func attachmentSize(size int64) string {
 		}
 	}
 	return fmt.Sprintf("%d B", size)
+}
+
+// commentSeparator is the rule that keeps one comment from reading as the
+// continuation of the one above it.
+func commentSeparator(width int) string {
+	if width <= 0 {
+		return ""
+	}
+	return commentSeparatorStyle.Render(strings.Repeat("─", width))
 }
 
 func renderComment(comment jira.Comment, width int) []string {
