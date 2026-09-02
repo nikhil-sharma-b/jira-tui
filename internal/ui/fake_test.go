@@ -24,6 +24,10 @@ type fakeClient struct {
 	// page at a time.
 	issues    []jira.Issue
 	searchErr error
+	// searchFor answers one JQL query with its own result set, which is how a
+	// query that is not the list's own -- an epic's children -- is given
+	// something other than the rows the list pages through.
+	searchFor map[string][]jira.Issue
 	// searchErrFor fails only the queries named in it, so one session can run
 	// a query that works and then one the server rejects.
 	searchErrFor map[string]error
@@ -108,6 +112,9 @@ func (c *fakeClient) Search(ctx context.Context, opts jira.SearchOptions) (*jira
 	}
 	if c.searchErr != nil {
 		return nil, c.searchErr
+	}
+	if issues, ok := c.searchFor[opts.JQL]; ok {
+		return &jira.SearchResult{Issues: append([]jira.Issue(nil), issues...), IsLast: true}, nil
 	}
 
 	// The token is the offset spelled opaquely, which is enough to exercise

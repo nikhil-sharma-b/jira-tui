@@ -374,7 +374,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.handleRow(msg)
 
 	case detailMsg:
-		accepted := m.detail.handle(msg)
+		accepted, childrenCmd := m.detail.handle(m.client, msg)
 		if accepted && msg.err == nil {
 			// The detail read is the live one; the row beside it came from a
 			// cached search. Where they disagree, the live read is right.
@@ -386,15 +386,21 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if accepted && msg.err == nil && msg.request == m.pendingDescriptionRequest && m.pendingDescription != "" && m.detail.issue != nil && m.detail.issue.Key == m.pendingDescription {
 			key := m.pendingDescription
 			m.pendingDescription = ""
-			return m, m.openEditor(writeDescription, key)
+			return m, tea.Batch(childrenCmd, m.openEditor(writeDescription, key))
 		}
 		if accepted && msg.err != nil {
 			m.pendingDescription = ""
 		}
-		return m, nil
+		return m, childrenCmd
 
 	case commentsMsg:
 		if m.detail.handleComments(msg) && msg.err != nil {
+			m.status = msg.err
+		}
+		return m, nil
+
+	case childrenMsg:
+		if m.detail.handleChildren(msg) && msg.err != nil {
 			m.status = msg.err
 		}
 		return m, nil

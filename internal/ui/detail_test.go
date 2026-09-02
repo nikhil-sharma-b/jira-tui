@@ -604,3 +604,72 @@ func TestATabRemembersWhereItWasLeft(t *testing.T) {
 		t.Errorf("returning to the Info tab did not return to where it was left:\n%s\nwant:\n%s", got, end)
 	}
 }
+
+// epicIssue is an epic, which is the only kind of item that has children and
+// so the only kind whose detail pane shows the Children tab.
+func epicIssue() jira.Issue {
+	issue := detailedIssue()
+	issue.Key, issue.Type, issue.Summary = "ENG-100", "Epic", "Rebuild the drive"
+	return issue
+}
+
+func TestAnEpicShowsItsChildrenInTheirOwnTab(t *testing.T) {
+	client := &fakeClient{
+		issues: []jira.Issue{epicIssue()},
+		searchFor: map[string][]jira.Issue{
+			`parent = "ENG-100" ORDER BY created ASC`: {
+				{Key: "ENG-101", Summary: "Machine the housing", Status: jira.Status{Name: "In Progress"}, Type: "Task"},
+				{Key: "ENG-102", Summary: "Fit the coil", Status: jira.Status{Name: "To Do"}, Type: "Bug"},
+			},
+		},
+	}
+	d := newDriver(t, client, testConfig(t, nil))
+	d.send(tea.WindowSizeMsg{Width: 110, Height: 30})
+	d.keys("enter")
+
+	d.keys("[") // Children is the last tab, so one step back from Info lands on it
+	if !strings.Contains(d.view(), "Children") {
+		t.Fatalf("the tab strip does not name Children for an epic:\n%s", d.view())
+	}
+	body := strings.Join(d.lines()[3:], "\n")
+	for _, want := range []string{"ENG-101", "Machine the housing", "In Progress", "ENG-102", "Fit the coil"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the Children tab does not show %q:\n%s", want, d.view())
+		}
+	}
+}
+
+func TestChildrenAreFetchedByParentAndOnlyForEpics(t *testing.T) {
+	client := &fakeClient{issues: []jira.Issue{detailedIssue()}}
+	d := newDriver(t, client, testConfig(t, nil))
+	d.send(tea.WindowSizeMsg{Width: 110, Height: 30})
+	d.keys("enter")
+
+	for _, request := range client.requests() {
+		if strings.Contains(request.JQL, "parent =") {
+			t.Errorf("a non-epic asked for children: %q", request.JQL)
+		}
+	}
+	if strings.Contains(d.view(), "Children") {
+		t.Errorf("the tab strip names Children for a non-epic:\n%s", d.view())
+	}
+	d.keys("[")
+	if !strings.Contains(strings.Join(d.lines()[3:], "\n"), "No subtasks.") {
+		t.Errorf("[ did not wrap from Info to Subtasks on a non-epic:\n%s", d.view())
+	}
+}
+
+func TestAnEpicWithNoChildrenSaysSo(t *testing.T) {
+	client := &fakeClient{
+		issues:    []jira.Issue{epicIssue()},
+		searchFor: map[string][]jira.Issue{`parent = "ENG-100" ORDER BY created ASC`: {}},
+	}
+	d := newDriver(t, client, testConfig(t, nil))
+	d.send(tea.WindowSizeMsg{Width: 110, Height: 30})
+	d.keys("enter")
+	d.keys("[")
+
+	if !strings.Contains(d.view(), "No children.") {
+		t.Errorf("an epic with no children does not say so:\n%s", d.view())
+	}
+}

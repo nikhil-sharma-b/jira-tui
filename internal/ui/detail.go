@@ -33,6 +33,7 @@ const (
 	tabAttachments
 	tabLinks
 	tabSubtasks
+	tabChildren
 	tabCount
 )
 
@@ -43,7 +44,16 @@ var detailTabNames = [tabCount]string{
 	tabAttachments: "Attachments",
 	tabLinks:       "Links",
 	tabSubtasks:    "Subtasks",
+	tabChildren:    "Children",
 }
+
+// childFields is what a row in the Children tab shows, and no more: the tab
+// lists children the way the other related-item tabs list their items.
+var childFields = []string{"summary", "status", "issuetype"}
+
+// childLimit caps the children fetched for one epic. A page is what the tab
+// can usefully show; an epic with more than this is read in the list pane.
+const childLimit = 100
 
 // tabBarRows is what the tab strip costs the body: the labels and the rule
 // under them.
@@ -63,6 +73,12 @@ type commentsMsg struct {
 	err      error
 }
 
+type childrenMsg struct {
+	request  uint64
+	children []jira.Issue
+	err      error
+}
+
 type detailTickMsg struct{ request uint64 }
 
 // detailPane owns everything specific to one live work-item fetch and its
@@ -76,9 +92,15 @@ type detailPane struct {
 	commentsLoading bool
 	comments        []jira.Comment
 	commentsErr     error
+	childrenLoading bool
+	children        []jira.Issue
+	childrenErr     error
 
 	request uint64
 	cancel  context.CancelFunc
+	// ctx is the open fetch's context, kept so that a request started once the
+	// item has arrived -- the children of an epic -- is cancelled with it.
+	ctx context.Context
 	// tab is the page on screen; tops remembers where each page was left, so
 	// returning to a tab returns to the place in it, not to its top.
 	tab   detailTab
@@ -95,11 +117,12 @@ func (d *detailPane) fetch(client jira.Client, key string) []tea.Cmd {
 	d.key = key
 	d.open, d.loading, d.err, d.issue, d.top, d.frame = true, true, nil, nil, 0, 0
 	d.commentsLoading, d.comments, d.commentsErr = true, nil, nil
+	d.childrenLoading, d.children, d.childrenErr = false, nil, nil
 	d.tops = [tabCount]int{}
 	d.request++
 	request := d.request
 	ctx, cancel := context.WithCancel(context.Background())
-	d.cancel = cancel
+	d.ctx, d.cancel = ctx, cancel
 	fields := append([]string(nil), detailFields...)
 	return []tea.Cmd{
 		func() tea.Msg {
@@ -121,11 +144,11 @@ func (d *detailPane) tick() tea.Cmd {
 }
 
 func (d *detailPane) handleTick(msg detailTickMsg) tea.Cmd {
-	if (!d.loading && !d.commentsLoading) || msg.request != d.request {
+	if (!d.loading && !d.commentsLoading && !d.childrenLoading) || msg.request != d.request {
 		return nil
 	}
 	d.frame = (d.frame + 1) % len(spinnerFrames)
-	if d.issue != nil && d.commentsLoading {
+	if d.issue != nil && (d.commentsLoading || d.childrenLoading) {
 		d.render()
 	}
 	return d.tick()
@@ -139,20 +162,24 @@ func (d *detailPane) cancelFetch() {
 }
 
 func (d *detailPane) selectionMoved() {
-	if !d.loading && !d.commentsLoading {
+	if !d.loading && !d.commentsLoading && !d.childrenLoading {
 		return
 	}
 	d.cancelFetch()
 	d.request++
-	d.loading, d.commentsLoading = false, false
+	d.loading, d.commentsLoading, d.childrenLoading = false, false, false
 	d.err = errors.New("detail fetch cancelled because the selection moved")
 	d.comments, d.commentsErr = nil, nil
+	d.children, d.childrenErr = nil, nil
 	d.lines = nil
 }
 
-func (d *detailPane) handle(msg detailMsg) bool {
+// handle takes the item itself. Whether the item is an epic is only known
+// once it has arrived, so the fetch of its children starts here rather than
+// alongside the other two requests.
+func (d *detailPane) handle(client jira.Client, msg detailMsg) (bool, tea.Cmd) {
 	if msg.request != d.request || !d.loading {
-		return false
+		return false, nil
 	}
 	d.loading = false
 	if msg.err != nil {
@@ -161,12 +188,59 @@ func (d *detailPane) handle(msg detailMsg) bool {
 		d.issue = nil
 		d.err = detailError(msg.err)
 		d.lines = nil
-		return true
+		return true, nil
 	}
 	d.issue, d.err = msg.issue, nil
+	cmd := d.fetchChildren(client)
+	if cmd != nil {
+		// The spinner's tick chain may have stopped while this request was in
+		// flight, so the children fetch restarts it alongside itself.
+		cmd = tea.Batch(cmd, d.tick())
+	}
+	d.normalizeTab()
+	d.finishFetch()
+	d.render()
+	return true, cmd
+}
+
+// fetchChildren asks for the item's children when it is an epic, reusing the
+// detail fetch's context so that moving off the item cancels this too.
+func (d *detailPane) fetchChildren(client jira.Client) tea.Cmd {
+	if !d.isEpic() || d.cancel == nil {
+		return nil
+	}
+	d.childrenLoading = true
+	request, key, ctx := d.request, d.issue.Key, d.ctx
+	return func() tea.Msg {
+		result, err := client.Search(ctx, jira.SearchOptions{
+			JQL:        fmt.Sprintf("parent = %q ORDER BY created ASC", key),
+			Fields:     childFields,
+			MaxResults: childLimit,
+		})
+		if err != nil {
+			return childrenMsg{request: request, err: err}
+		}
+		return childrenMsg{request: request, children: result.Issues}
+	}
+}
+
+func (d *detailPane) handleChildren(msg childrenMsg) bool {
+	if msg.request != d.request || !d.childrenLoading {
+		return false
+	}
+	d.childrenLoading = false
+	d.childrenErr = msg.err
+	d.children = append(d.children[:0], msg.children...)
 	d.finishFetch()
 	d.render()
 	return true
+}
+
+// isEpic reports whether the open item is the kind that has children rather
+// than subtasks. Sites rename the type's display name in case only, so the
+// comparison is case-insensitive.
+func (d *detailPane) isEpic() bool {
+	return d.issue != nil && strings.EqualFold(strings.TrimSpace(d.issue.Type), "Epic")
 }
 
 func (d *detailPane) handleComments(msg commentsMsg) bool {
@@ -182,7 +256,7 @@ func (d *detailPane) handleComments(msg commentsMsg) bool {
 }
 
 func (d *detailPane) finishFetch() {
-	if !d.loading && !d.commentsLoading {
+	if !d.loading && !d.commentsLoading && !d.childrenLoading {
 		d.cancelFetch()
 	}
 }
@@ -221,6 +295,8 @@ func (d *detailPane) render() {
 		lines = d.renderLinks()
 	case tabSubtasks:
 		lines = d.renderSubtasks()
+	case tabChildren:
+		lines = d.renderChildren()
 	default:
 		lines = d.renderInfo()
 	}
@@ -341,6 +417,27 @@ func (d *detailPane) renderSubtasks() []string {
 	return lines
 }
 
+// renderChildren is the Children tab, shown only for epics: the items that
+// name this one as their parent, in the same form the other related tabs use.
+func (d *detailPane) renderChildren() []string {
+	switch {
+	case d.childrenLoading:
+		return []string{spinnerFrames[d.frame] + " Loading children…"}
+	case d.childrenErr != nil:
+		return []string{"Children could not be loaded."}
+	case len(d.children) == 0:
+		return []string{"No children."}
+	}
+	var lines []string
+	for index, child := range d.children {
+		if index > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, relatedItem(child.Key, child.Summary, child.Status, child.Type, d.width)...)
+	}
+	return lines
+}
+
 // relatedItem is how another work item is written wherever one is referred to:
 // its key, its summary, and the state and kind it is in, coloured the way the
 // list colours the same values.
@@ -393,10 +490,44 @@ func renderComment(comment jira.Comment, width int) []string {
 	return lines
 }
 
+// tabs is the strip as it stands for the open item: every tab, less the ones
+// that do not apply to it. Children is an epic's tab, and an epic is the only
+// kind of item that has any.
+func (d *detailPane) tabs() []detailTab {
+	tabs := make([]detailTab, 0, tabCount)
+	for tab := detailTab(0); tab < tabCount; tab++ {
+		if tab == tabChildren && !d.isEpic() {
+			continue
+		}
+		tabs = append(tabs, tab)
+	}
+	return tabs
+}
+
+// normalizeTab falls back to the landing tab when the page on screen is one
+// the open item does not have, which is what happens when an epic's Children
+// tab is left open and the next item read is not an epic.
+func (d *detailPane) normalizeTab() {
+	if indexOfTab(d.tabs(), d.tab) < 0 {
+		d.tab, d.top = tabInfo, d.tops[tabInfo]
+	}
+}
+
+// tabIndex is where a tab sits in the visible strip, and -1 when it is not in
+// it at all.
+func indexOfTab(tabs []detailTab, tab detailTab) int {
+	for index, candidate := range tabs {
+		if candidate == tab {
+			return index
+		}
+	}
+	return -1
+}
+
 // setTab moves to a page of the pane, parking the current page's scroll
 // position so that coming back lands where the eye left off.
 func (d *detailPane) setTab(tab detailTab) {
-	if tab < 0 || tab >= tabCount || tab == d.tab {
+	if tab < 0 || tab >= tabCount || tab == d.tab || indexOfTab(d.tabs(), tab) < 0 {
 		return
 	}
 	d.tops[d.tab] = d.top
@@ -407,7 +538,13 @@ func (d *detailPane) setTab(tab detailTab) {
 
 // cycleTab moves through the tab strip and wraps at either end.
 func (d *detailPane) cycleTab(delta int) {
-	d.setTab((d.tab + detailTab(delta) + tabCount) % tabCount)
+	tabs := d.tabs()
+	index := indexOfTab(tabs, d.tab)
+	if index < 0 {
+		d.setTab(tabs[0])
+		return
+	}
+	d.setTab(tabs[((index+delta)%len(tabs)+len(tabs))%len(tabs)])
 }
 
 func (d *detailPane) move(action config.Action, count int) {
@@ -476,7 +613,8 @@ func (d *detailPane) view() []string {
 // ellipses says nothing about where the user is.
 func (d *detailPane) tabBar() []string {
 	const gap = 2
-	first, last := d.visibleTabs(gap)
+	tabs := d.tabs()
+	first, last := d.visibleTabs(tabs, gap)
 
 	var labels, rule strings.Builder
 	write := func(text string, active bool) {
@@ -491,13 +629,13 @@ func (d *detailPane) tabBar() []string {
 	if first > 0 {
 		write("‹ ", false)
 	}
-	for tab := first; tab <= last; tab++ {
-		if tab > first {
+	for index := first; index <= last; index++ {
+		if index > first {
 			write(strings.Repeat(" ", gap), false)
 		}
-		write(detailTabNames[tab], tab == d.tab)
+		write(detailTabNames[tabs[index]], tabs[index] == d.tab)
 	}
-	if last < tabCount-1 {
+	if last < len(tabs)-1 {
 		write(" ›", false)
 	}
 	if pad := d.width - ansi.StringWidth(ansi.Strip(rule.String())); pad > 0 {
@@ -509,19 +647,20 @@ func (d *detailPane) tabBar() []string {
 // visibleTabs is the run of tabs that fits the pane, grown outwards from the
 // active one so that it is always on screen and its neighbours are shown in
 // preference to distant tabs.
-func (d *detailPane) visibleTabs(gap int) (detailTab, detailTab) {
-	first, last := d.tab, d.tab
-	width := ansi.StringWidth(detailTabNames[d.tab]) + 4 // room for both chevrons
+func (d *detailPane) visibleTabs(tabs []detailTab, gap int) (int, int) {
+	active := max(indexOfTab(tabs, d.tab), 0)
+	first, last := active, active
+	width := ansi.StringWidth(detailTabNames[tabs[active]]) + 4 // room for both chevrons
 	for {
 		grew := false
-		if last < tabCount-1 && width+gap+ansi.StringWidth(detailTabNames[last+1]) <= d.width {
+		if last < len(tabs)-1 && width+gap+ansi.StringWidth(detailTabNames[tabs[last+1]]) <= d.width {
 			last++
-			width += gap + ansi.StringWidth(detailTabNames[last])
+			width += gap + ansi.StringWidth(detailTabNames[tabs[last]])
 			grew = true
 		}
-		if first > 0 && width+gap+ansi.StringWidth(detailTabNames[first-1]) <= d.width {
+		if first > 0 && width+gap+ansi.StringWidth(detailTabNames[tabs[first-1]]) <= d.width {
 			first--
-			width += gap + ansi.StringWidth(detailTabNames[first])
+			width += gap + ansi.StringWidth(detailTabNames[tabs[first]])
 			grew = true
 		}
 		if !grew {
