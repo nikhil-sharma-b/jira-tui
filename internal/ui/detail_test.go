@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/nikhil-sharma-b/jira-tui/internal/config"
 	"github.com/nikhil-sharma-b/jira-tui/internal/jira"
 )
 
@@ -671,5 +672,104 @@ func TestAnEpicWithNoChildrenSaysSo(t *testing.T) {
 
 	if !strings.Contains(d.view(), "No children.") {
 		t.Errorf("an epic with no children does not say so:\n%s", d.view())
+	}
+}
+
+func longComments() []jira.Comment {
+	comments := make([]jira.Comment, 24)
+	for i := range comments {
+		comments[i] = jira.Comment{
+			ID:      string(rune('A' + i)),
+			Author:  &jira.User{DisplayName: "Commenter"},
+			Created: time.Date(2026, 8, 20, 10, i, 0, 0, time.UTC),
+			Updated: time.Date(2026, 8, 20, 10, i, 0, 0, time.UTC),
+			Body:    jira.RawDocument(`{"type":"doc","version":1,"content":[{"type":"paragraph","content":[{"type":"text","text":"Comment body ` + string(rune('A'+i)) + `"}]}]}`),
+		}
+	}
+	return comments
+}
+
+// By default R reloads the focused pane: on detail it rereads the item and
+// leaves the list's query alone.
+func TestReloadOnDetailRereadsOnlyTheItem(t *testing.T) {
+	client := &fakeClient{issues: []jira.Issue{detailedIssue()}}
+	d := newDriver(t, client, testConfig(t, nil))
+	d.keys("enter")
+	searches := len(client.requests())
+
+	changed := detailedIssue()
+	changed.Summary = "Replace the flux capacitor"
+	client.mu.Lock()
+	client.issueFor = map[string]jira.Issue{"ENG-1": changed}
+	client.mu.Unlock()
+	d.keys("R")
+
+	if got := client.issueRequests(); len(got) != 2 {
+		t.Errorf("detail requests = %v, want R to reread ENG-1", got)
+	}
+	if got := len(client.requests()); got != searches {
+		t.Errorf("R on detail made %d searches, want none", got-searches)
+	}
+	if !strings.Contains(d.view(), "Replace the flux capacitor") {
+		t.Errorf("the reread item is not on screen:\n%s", d.view())
+	}
+}
+
+func TestReloadOnTheListLeavesTheOpenItemAlone(t *testing.T) {
+	client := &fakeClient{issues: []jira.Issue{detailedIssue()}}
+	d := newDriver(t, client, testConfig(t, nil))
+	d.keys("enter", "ctrl+w", "h")
+	searches := len(client.requests())
+
+	d.keys("R")
+
+	if got := client.issueRequests(); len(got) != 1 {
+		t.Errorf("detail requests = %v, want R on the list not to reread the item", got)
+	}
+	if got := len(client.requests()); got != searches+1 {
+		t.Errorf("R on the list made %d searches, want 1", got-searches)
+	}
+}
+
+func TestReloadBothReloadsTheListAndTheOpenItem(t *testing.T) {
+	for _, keys := range [][]string{{"enter"}, {"enter", "ctrl+w", "h"}} {
+		client := &fakeClient{issues: []jira.Issue{detailedIssue()}}
+		cfg := testConfig(t, nil)
+		cfg.Reload = config.ReloadBoth
+		d := newDriver(t, client, cfg)
+		d.keys(keys...)
+		searches := len(client.requests())
+
+		d.keys("R")
+
+		if got := client.issueRequests(); len(got) != 2 {
+			t.Errorf("after %v: detail requests = %v, want R to reread ENG-1", keys, got)
+		}
+		if got := len(client.requests()); got != searches+1 {
+			t.Errorf("after %v: R made %d searches, want 1", keys, got-searches)
+		}
+	}
+}
+
+// A reload is not navigation: the tab and the place in it survive the reread.
+func TestReloadKeepsTheTabAndScrollPosition(t *testing.T) {
+	client := &fakeClient{issues: []jira.Issue{detailedIssue()}, comments: map[string][]jira.Comment{"ENG-1": longComments()}}
+	d := newDriver(t, client, testConfig(t, nil))
+	d.send(tea.WindowSizeMsg{Width: 80, Height: 12})
+	d.keys("enter")
+	d.keys("]", "]")
+	d.keys("G")
+	before := d.view()
+	if strings.Contains(before, "Comment body A") || !strings.Contains(before, "Comment body X") {
+		t.Fatalf("the test did not scroll to the end of the comments:\n%s", before)
+	}
+
+	d.keys("R")
+
+	if got := client.issueRequests(); len(got) != 2 {
+		t.Fatalf("detail requests = %v, want R to reread ENG-1", got)
+	}
+	if after := d.view(); after != before {
+		t.Errorf("the reload moved the pane.\nbefore:\n%s\nafter:\n%s", before, after)
 	}
 }

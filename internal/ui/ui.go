@@ -647,10 +647,28 @@ func (m *Model) openDetail() tea.Cmd {
 	return m.openKey(m.list.issues[m.list.cursor].Key, true)
 }
 
-// reload discards the loaded rows and runs the query again from the top,
+// reload is R. Which panes it reloads is the reload setting: by default only
+// the focused one, so rereading the item being read does not throw away the
+// list position underneath it.
+func (m *Model) reload() tea.Cmd {
+	both := m.cfg.Reload == config.ReloadBoth
+	detail := m.detail.open && (both || m.focus == PaneDetail)
+	var cmds []tea.Cmd
+	if both || !detail {
+		cmds = append(cmds, m.reloadList())
+	}
+	if detail {
+		m.status = nil
+		cmds = append(cmds, m.detail.reread(m.client)...)
+		cmds = append(cmds, m.detail.tick())
+	}
+	return tea.Batch(cmds...)
+}
+
+// reloadList discards the loaded rows and runs the query again from the top,
 // going to Jira rather than to the cache: R is what the user presses when they
 // do not believe what is on screen, and a stored copy of it is no answer.
-func (m *Model) reload() tea.Cmd {
+func (m *Model) reloadList() tea.Cmd {
 	if m.columns == nil {
 		// The field metadata never arrived, so there is nothing to reload but
 		// the metadata itself.

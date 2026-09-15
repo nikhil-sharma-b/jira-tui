@@ -113,6 +113,12 @@ type detailPane struct {
 	// hit is the line the last search jump landed on, -1 when there is none
 	// the next jump can count from.
 	hit int
+	// rereading marks a fetch of the item already on screen. It keeps the
+	// stale page visible while the read is out, and puts every tab back where
+	// it was left once the read is in: a reload is not navigation.
+	rereading bool
+	keptTop   int
+	keptTops  [tabCount]int
 }
 
 func (d *detailPane) fetch(client jira.Client, key string) []tea.Cmd {
@@ -123,6 +129,7 @@ func (d *detailPane) fetch(client jira.Client, key string) []tea.Cmd {
 	d.childrenLoading, d.children, d.childrenErr = false, nil, nil
 	d.tops = [tabCount]int{}
 	d.hit = -1
+	d.rereading = false
 	d.request++
 	request := d.request
 	ctx, cancel := context.WithCancel(context.Background())
@@ -138,6 +145,19 @@ func (d *detailPane) fetch(client jira.Client, key string) []tea.Cmd {
 			return commentsMsg{request: request, comments: comments, err: err}
 		},
 	}
+}
+
+// reread fetches the open item again without leaving the place the user was
+// reading it at.
+func (d *detailPane) reread(client jira.Client) []tea.Cmd {
+	issue, lines, top, tops := d.issue, d.lines, d.top, d.tops
+	cmds := d.fetch(client, d.key)
+	if issue != nil {
+		d.issue, d.lines = issue, lines
+		d.rereading, d.keptTop, d.keptTops = true, top, tops
+		d.keptTops[d.tab] = top
+	}
+	return cmds
 }
 
 func (d *detailPane) tick() tea.Cmd {
@@ -172,6 +192,7 @@ func (d *detailPane) selectionMoved() {
 	d.cancelFetch()
 	d.request++
 	d.loading, d.commentsLoading, d.childrenLoading = false, false, false
+	d.rereading = false
 	d.err = errors.New("detail fetch cancelled because the selection moved")
 	d.comments, d.commentsErr = nil, nil
 	d.children, d.childrenErr = nil, nil
@@ -262,6 +283,10 @@ func (d *detailPane) handleComments(msg commentsMsg) bool {
 func (d *detailPane) finishFetch() {
 	if !d.loading && !d.commentsLoading && !d.childrenLoading {
 		d.cancelFetch()
+		if d.rereading {
+			d.rereading = false
+			d.tops, d.top = d.keptTops, d.keptTops[d.tab]
+		}
 	}
 }
 
@@ -600,7 +625,7 @@ func (d *detailPane) clamp() {
 func (d *detailPane) view(pattern string) []string {
 	var lines []string
 	switch {
-	case d.loading:
+	case d.loading && !d.rereading:
 		lines = []string{spinnerFrames[d.frame] + " Loading…"}
 	case d.err != nil:
 		lines = []string{"Detail could not be loaded.", d.err.Error()}

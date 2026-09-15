@@ -14,6 +14,10 @@ leader = " "
 # then vi. The scratch filename is passed as one final argument without a shell.
 # editor = "nvim -f"
 images = "off"         # "sixel" reserved for a later version
+# What R reloads: "focused" reloads only the focused pane (the list reruns its
+# query, the detail pane rereads its work item); "both" reloads the list and
+# the open detail pane together.
+reload = "focused"
 
 [site]
 url   = "https://your-site.atlassian.net"

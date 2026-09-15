@@ -57,6 +57,9 @@ func TestLoadMinimalConfigGetsDefaults(t *testing.T) {
 	if got, want := cfg.Images, "off"; got != want {
 		t.Errorf("images = %q, want %q", got, want)
 	}
+	if got, want := cfg.Reload, "focused"; got != want {
+		t.Errorf("reload = %q, want %q", got, want)
+	}
 	if len(cfg.Columns) == 0 {
 		t.Error("columns = empty, want the default column set")
 	}
@@ -69,6 +72,7 @@ func TestLoadOverridesDefaults(t *testing.T) {
 	cfg, err := config.Load(write(t, topLevel(`
 leader = ","
 images = "sixel"
+reload = "both"
 columns = ["key", "summary"]
 default_query = "project = PROJ"
 
@@ -159,6 +163,11 @@ func TestLoadErrorsNameTheOffendingKey(t *testing.T) {
 			name:     "unknown image mode",
 			contents: topLevel("images = \"kitty\"\n"),
 			wantKey:  "images",
+		},
+		{
+			name:     "unknown reload mode",
+			contents: topLevel("reload = \"list\"\n"),
+			wantKey:  "reload",
 		},
 	}
 	for _, tt := range tests {

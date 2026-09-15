@@ -73,6 +73,11 @@ type Config struct {
 	// placeholders; "sixel" is reserved for a later version.
 	Images string `toml:"images"`
 
+	// Reload says what R reloads. "focused" reloads only the focused pane --
+	// the list reruns its query, the detail pane rereads its work item -- and
+	// "both" reloads the list and, when one is open, the detail pane too.
+	Reload string `toml:"reload"`
+
 	Timeouts Timeouts `toml:"timeouts"`
 
 	// path and mode record where this config was read from, so that the
@@ -130,6 +135,12 @@ func (d *Duration) UnmarshalText(b []byte) error {
 // JQL search, short enough that a wedged connection does not hang the UI.
 const DefaultRequestTimeout = 15 * time.Second
 
+// The values of reload.
+const (
+	ReloadFocused = "focused"
+	ReloadBoth    = "both"
+)
+
 // DefaultQuery is what jt shows when nothing is pinned.
 const DefaultQuery = "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC"
 
@@ -143,6 +154,7 @@ func Defaults() *Config {
 		Keys:         map[string]string{},
 		Leader:       " ",
 		Images:       "off",
+		Reload:       ReloadFocused,
 		Timeouts:     Timeouts{Request: Duration(DefaultRequestTimeout)},
 	}
 }
@@ -273,6 +285,11 @@ func (c *Config) validate() error {
 	case "off", "sixel":
 	default:
 		return &Error{Key: "images", Msg: fmt.Sprintf("%q is not one of \"off\", \"sixel\"", c.Images)}
+	}
+	switch c.Reload {
+	case ReloadFocused, ReloadBoth:
+	default:
+		return &Error{Key: "reload", Msg: fmt.Sprintf("%q is not one of \"focused\", \"both\"", c.Reload)}
 	}
 	for name := range c.Keys {
 		if !IsAction(name) {
