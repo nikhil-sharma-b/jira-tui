@@ -239,4 +239,7 @@ var (
 	// selected row is already reverse and a match on it must still show.
 	matchStyle         = lipgloss.NewStyle().Bold(true).Underline(true)
 	selectedMatchStyle = selectedStyle.Bold(true).Underline(true)
+	// currentMatchStyle marks the detail match n last landed on, in the
+	// selection band, so it is told apart from the merely underlined rest.
+	currentMatchStyle = selectedStyle.Bold(true)
 )

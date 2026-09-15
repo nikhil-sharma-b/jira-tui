@@ -631,12 +631,18 @@ func (d *detailPane) view(pattern string) []string {
 		lines = []string{"Detail could not be loaded.", d.err.Error()}
 	case len(d.lines) > 0:
 		end := min(d.top+d.bodyRows(), len(d.lines))
-		for _, line := range d.lines[d.top:end] {
+		for i, line := range d.lines[d.top:end] {
 			if pattern != "" && lineMatches(line, pattern) {
+				style := matchStyle
+				if d.top+i == d.hit {
+					// The line n landed on stands out from the other matches,
+					// as vim's CurSearch does, so the eye knows where it is.
+					style = currentMatchStyle
+				}
 				// The line's own colours give way to the match marking: the
 				// styling is interleaved with the text, and a match must not be
 				// sliced out of the middle of an escape sequence.
-				line = highlight(ansi.Strip(line), pattern, plainStyle, matchStyle)
+				line = highlight(ansi.Strip(line), pattern, plainStyle, style)
 			}
 			lines = append(lines, line)
 		}
