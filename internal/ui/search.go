@@ -9,11 +9,13 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/nikhil-sharma-b/jira-tui/internal/jira"
 )
 
 // In-pane search is the half of the vim split that never leaves the machine:
-// / narrows what is already loaded, :jql goes and asks for something else.
+// / searches the focused pane, what is already loaded; :jql and <leader>/ go
+// and ask the site for something else.
 // Keeping them apart is what makes / instant and what stops a typo in it from
 // costing a round trip.
 
@@ -36,7 +38,37 @@ func (m *Model) runSearch(pattern string) tea.Cmd {
 		return nil
 	}
 	m.search.pattern = pattern
+	m.detail.hit = -1
 	return m.moveToMatch(1, 1, true)
+}
+
+// searchesDetail reports whether / and n act on the detail pane: it has focus
+// and has something on it to search. Otherwise they act on the list, as they
+// did before there was a second pane.
+func (m *Model) searchesDetail() bool {
+	_, detailVisible := m.visiblePanes()
+	return m.focus == PaneDetail && detailVisible && m.detail.open && !m.detail.loading
+}
+
+// runJiraSearch replaces the list with the work items whose text contains
+// what was typed, anywhere on the site. The pattern is kept as the in-pane one
+// too, so the rows that come back show why they matched and n walks them.
+func (m *Model) runJiraSearch(text string) tea.Cmd {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	query := "text ~ " + jqlString(text) + " ORDER BY updated DESC"
+	// Recorded as the :jql it stands for, so it can be recalled and refined.
+	m.history.add("jql " + query)
+	m.search.pattern = text
+	m.goList()
+	return m.runQuery(query)
+}
+
+// jqlString quotes s as a JQL string literal.
+func jqlString(s string) string {
+	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
 }
 
 // moveToMatch moves the selection count matches away in the given direction,
@@ -51,6 +83,9 @@ func (m *Model) moveToMatch(direction, count int, inclusive bool) tea.Cmd {
 		m.status = errors.New("there is no search pattern")
 		return nil
 	}
+	if m.searchesDetail() {
+		return m.moveToDetailMatch(direction, count, inclusive)
+	}
 	matches := m.matchingRows()
 	if len(matches) == 0 {
 		// The selection stays where it is. A search that found nothing has no
@@ -62,6 +97,47 @@ func (m *Model) moveToMatch(direction, count int, inclusive bool) tea.Cmd {
 	m.status = nil
 	m.list.selectRow(matchAt(matches, m.list.cursor, direction, count, inclusive))
 	return nil
+}
+
+// moveToDetailMatch is moveToMatch over the lines of the detail tab on screen.
+// With no hit to count from -- a fresh pattern, a tab change, a scroll away --
+// it counts from the top of the viewport, inclusively, which is where the eye
+// is.
+func (m *Model) moveToDetailMatch(direction, count int, inclusive bool) tea.Cmd {
+	d := &m.detail
+	var matches []int
+	for i, line := range d.lines {
+		if lineMatches(line, m.search.pattern) {
+			matches = append(matches, i)
+		}
+	}
+	if len(matches) == 0 {
+		m.status = fmt.Errorf("no match for %q", m.search.pattern)
+		return nil
+	}
+	m.status = nil
+	from := d.hit
+	if from < 0 {
+		from, inclusive = d.top, true
+		if direction < 0 {
+			// Backwards from the viewport means from its last line.
+			from = min(d.top+d.bodyRows(), len(d.lines))
+			inclusive = false
+		}
+	}
+	d.hit = matchAt(matches, from, direction, count, inclusive)
+	if d.hit < d.top || d.hit >= d.top+d.bodyRows() {
+		d.top = d.hit
+		d.clamp()
+	}
+	return nil
+}
+
+// lineMatches reports whether a drawn line contains the pattern, looking only
+// at its text: the escape sequences styling it are not something anyone typed
+// a pattern to find.
+func lineMatches(line, pattern string) bool {
+	return strings.Contains(strings.ToLower(ansi.Strip(line)), strings.ToLower(pattern))
 }
 
 // matchAt picks the match count steps from where the cursor sits. The

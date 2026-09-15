@@ -40,6 +40,7 @@ request = "15s"
 # See ? in the app for the bindings actually in effect.
 [keys]
 # transition = "<leader>t"
+# search_jira = "<leader>/"
 
 # Bind a named workflow transition to a key, applying it without opening the
 # picker. The name is resolved live at the keypress, against the transitions

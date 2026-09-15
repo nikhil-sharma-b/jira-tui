@@ -90,6 +90,7 @@ var countable = map[config.Action]bool{
 var entersMode = map[config.Action]Mode{
 	config.ActionCommandline:  ModeCommand,
 	config.ActionSearchInPane: ModeSearch,
+	config.ActionSearchJira:   ModeSearch,
 	config.ActionTransition:   ModePicker,
 	config.ActionAssign:       ModePicker,
 }

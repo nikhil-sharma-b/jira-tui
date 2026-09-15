@@ -60,6 +60,7 @@ var helpCategories = []category{
 		{config.ActionCommandline, "commandline"},
 		{config.ActionNormalMode, "normal mode, from anywhere"},
 		{config.ActionSearchInPane, "search in pane"},
+		{config.ActionSearchJira, "search all of Jira"},
 		{config.ActionSearchNext, "next match"},
 		{config.ActionSearchPrev, "previous match"},
 		{config.ActionClosePane, "close pane"},

@@ -501,8 +501,11 @@ func (m *Model) handleText(key string) tea.Cmd {
 	if !m.prompt.handle(key) {
 		return nil
 	}
-	line, mode := m.prompt.text(), m.prompt.mode
+	line, mode, jira := m.prompt.text(), m.prompt.mode, m.prompt.jira
 	m.closePrompt()
+	if jira {
+		return m.runJiraSearch(line)
+	}
 	if mode == ModeSearch {
 		return m.runSearch(line)
 	}
@@ -555,6 +558,8 @@ func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
 		return m.openPrompt(m.newCommandPrompt())
 	case config.ActionSearchInPane:
 		return m.openPrompt(m.newSearchPrompt())
+	case config.ActionSearchJira:
+		return m.openPrompt(newJiraSearchPrompt())
 	case config.ActionSearchNext:
 		return m.moveToMatch(1, max(count, 1), false)
 	case config.ActionSearchPrev:
@@ -690,6 +695,12 @@ func (m *Model) newCommandPrompt() *prompt {
 // candidates would be the rows themselves, which is what the search is for.
 func (m *Model) newSearchPrompt() *prompt {
 	return &prompt{mode: ModeSearch, sigil: "/"}
+}
+
+// newJiraSearchPrompt opens the line whose text is sent to Jira. Its sigil
+// spells out the JQL it becomes, so that it is never mistaken for the local /.
+func newJiraSearchPrompt() *prompt {
+	return &prompt{mode: ModeSearch, sigil: "text ~ ", jira: true}
 }
 
 // runQuery puts a different JQL on screen. Unlike reload it does not empty the
@@ -864,7 +875,7 @@ func (m *Model) View() string {
 	bodyRows := max(m.height-len(footer), 0)
 	var lines []string
 	if detailVisible {
-		lines = boxed(m.detail.view(), m.width, bodyRows, m.detailTitle(), m.paneHint(config.ActionPaneRight), true)
+		lines = boxed(m.detail.view(m.search.pattern), m.width, bodyRows, m.detailTitle(), m.paneHint(config.ActionPaneRight), true)
 	} else {
 		lines = boxed(m.listPane(inner(m.width), inner(bodyRows)), m.width, bodyRows, listTitle,
 			m.paneHint(config.ActionPaneLeft), true)
@@ -928,7 +939,7 @@ func (m *Model) twoPaneView() string {
 	leftWidth, rightWidth := m.paneWidths()
 	left := boxed(m.listPane(inner(leftWidth), inner(bodyRows)), leftWidth, bodyRows,
 		listTitle, m.paneHint(config.ActionPaneLeft), m.focus == PaneList)
-	right := boxed(m.detail.view(), rightWidth, bodyRows, m.detailTitle(),
+	right := boxed(m.detail.view(m.search.pattern), rightWidth, bodyRows, m.detailTitle(),
 		m.paneHint(config.ActionPaneRight), m.focus == PaneDetail)
 
 	lines := make([]string, bodyRows)

@@ -110,6 +110,9 @@ type detailPane struct {
 	rows  int
 	lines []string
 	frame int
+	// hit is the line the last search jump landed on, -1 when there is none
+	// the next jump can count from.
+	hit int
 }
 
 func (d *detailPane) fetch(client jira.Client, key string) []tea.Cmd {
@@ -119,6 +122,7 @@ func (d *detailPane) fetch(client jira.Client, key string) []tea.Cmd {
 	d.commentsLoading, d.comments, d.commentsErr = true, nil, nil
 	d.childrenLoading, d.children, d.childrenErr = false, nil, nil
 	d.tops = [tabCount]int{}
+	d.hit = -1
 	d.request++
 	request := d.request
 	ctx, cancel := context.WithCancel(context.Background())
@@ -533,6 +537,7 @@ func (d *detailPane) setTab(tab detailTab) {
 	d.tops[d.tab] = d.top
 	d.tab = tab
 	d.top = d.tops[tab]
+	d.hit = -1
 	d.render()
 }
 
@@ -574,6 +579,11 @@ func (d *detailPane) move(action config.Action, count int) {
 		d.top += max(d.bodyRows()-n, 0)
 	}
 	d.clamp()
+	if d.hit < d.top || d.hit >= d.top+d.bodyRows() {
+		// Scrolled away from the last hit: the next n counts from what is on
+		// screen, not from somewhere the user has left.
+		d.hit = -1
+	}
 }
 
 // bodyRows is what is left for content once the tab strip has taken its two
@@ -582,9 +592,12 @@ func (d *detailPane) bodyRows() int { return max(d.rows-tabBarRows, 0) }
 
 func (d *detailPane) clamp() {
 	d.top = min(max(d.top, 0), max(len(d.lines)-d.bodyRows(), 0))
+	if d.hit >= len(d.lines) {
+		d.hit = -1
+	}
 }
 
-func (d *detailPane) view() []string {
+func (d *detailPane) view(pattern string) []string {
 	var lines []string
 	switch {
 	case d.loading:
@@ -593,7 +606,15 @@ func (d *detailPane) view() []string {
 		lines = []string{"Detail could not be loaded.", d.err.Error()}
 	case len(d.lines) > 0:
 		end := min(d.top+d.bodyRows(), len(d.lines))
-		lines = append(lines, d.lines[d.top:end]...)
+		for _, line := range d.lines[d.top:end] {
+			if pattern != "" && lineMatches(line, pattern) {
+				// The line's own colours give way to the match marking: the
+				// styling is interleaved with the text, and a match must not be
+				// sliced out of the middle of an escape sequence.
+				line = highlight(ansi.Strip(line), pattern, plainStyle, matchStyle)
+			}
+			lines = append(lines, line)
+		}
 	default:
 		lines = []string{"No detail loaded."}
 	}
@@ -672,7 +693,7 @@ func (d *detailPane) visibleTabs(tabs []detailTab, gap int) (int, int) {
 func (d *detailPane) close() {
 	d.cancelFetch()
 	request, tab := d.request+1, d.tab
-	*d = detailPane{request: request, tab: tab}
+	*d = detailPane{request: request, tab: tab, hit: -1}
 }
 
 func fitWidth(s string, width int) string {

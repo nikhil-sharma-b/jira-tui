@@ -1,8 +1,12 @@
 package ui_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/nikhil-sharma-b/jira-tui/internal/jira"
 )
 
 // search types a pattern at / and submits it.
@@ -139,5 +143,56 @@ func TestACountRepeatsTheJumpToTheNextMatch(t *testing.T) {
 
 	if got := d.selected(); got != "ENG-4" {
 		t.Errorf("3n moved to %q, want ENG-4", got)
+	}
+}
+
+// longIssue has a description far taller than the detail pane, with one line
+// that can only be reached by scrolling.
+func longIssue() jira.Issue {
+	var paras []string
+	for i := 0; i < 60; i++ {
+		text := fmt.Sprintf("filler paragraph %d", i)
+		if i == 45 {
+			text = "the needle is here"
+		}
+		paras = append(paras, `{"type":"paragraph","content":[{"type":"text","text":"`+text+`"}]}`)
+	}
+	issue := detailedIssue()
+	issue.Description = jira.RawDocument(`{"type":"doc","version":1,"content":[` + strings.Join(paras, ",") + `]}`)
+	return issue
+}
+
+func TestSlashInTheDetailPaneScrollsToTheMatch(t *testing.T) {
+	client := &fakeClient{issues: []jira.Issue{longIssue()}}
+	d := newDriver(t, client, testConfig(t, nil))
+	d.send(tea.WindowSizeMsg{Width: 100, Height: 20})
+	d.keys("enter", "gd")
+	if strings.Contains(d.view(), "needle") {
+		t.Fatalf("the match is on screen before searching:\n%s", d.view())
+	}
+
+	search(d, "needle")
+
+	if !strings.Contains(d.view(), "the needle is here") {
+		t.Errorf("the detail pane did not scroll to the match:\n%s", d.view())
+	}
+	if got := d.selected(); got != "ENG-1" {
+		t.Errorf("searching the detail pane moved the list selection to %q", got)
+	}
+}
+
+func TestLeaderSlashSearchesJiraText(t *testing.T) {
+	client := &fakeClient{issues: sampleIssues(5)}
+	d := newDriver(t, client, testConfig(t, nil))
+
+	d.keys("space", "/")
+	d.typeText(`flux "cap" a\b`)
+	d.keys("enter")
+	d.flush()
+
+	requests := client.requests()
+	want := `text ~ "flux \"cap\" a\\b" ORDER BY updated DESC`
+	if got := requests[len(requests)-1].JQL; got != want {
+		t.Errorf("<leader>/ searched %q, want %q", got, want)
 	}
 }

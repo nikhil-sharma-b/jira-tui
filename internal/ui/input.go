@@ -25,6 +25,9 @@ type prompt struct {
 	// sigil is the single character the line opens with, which is also how a
 	// user tells the two modes apart at a glance.
 	sigil string
+	// jira marks a search line whose text goes to the site as a JQL text
+	// search instead of narrowing the focused pane.
+	jira bool
 
 	buf    []rune
 	cursor int

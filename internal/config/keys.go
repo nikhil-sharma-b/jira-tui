@@ -56,6 +56,9 @@ const (
 	ActionYankKey     Action = "yank_key"
 	ActionYankURL     Action = "yank_url"
 	ActionOpenBrowser Action = "open_browser"
+	// ActionSearchJira asks the site rather than the screen, so it sits behind
+	// the leader with everything else that leaves the machine.
+	ActionSearchJira Action = "search_jira"
 )
 
 // transitionPrefix marks an action that applies one named workflow transition
@@ -121,6 +124,7 @@ func DefaultKeymap() Keymap {
 		ActionYankKey:     "<leader>y",
 		ActionYankURL:     "<leader>Y",
 		ActionOpenBrowser: "<leader>o",
+		ActionSearchJira:  "<leader>/",
 	}
 }
 
