@@ -44,6 +44,15 @@ Content-Type: application/json;charset=UTF-8
         }
       }
     ],
+    "parent": {
+      "id": "10100",
+      "key": "ENG-100",
+      "fields": {
+        "summary": "Time machine",
+        "status": {"id": "3", "name": "In Progress", "statusCategory": {"key": "indeterminate"}},
+        "issuetype": {"name": "Epic"}
+      }
+    },
     "subtasks": [
       {
         "id": "10004",

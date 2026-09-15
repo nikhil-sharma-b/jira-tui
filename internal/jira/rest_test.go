@@ -409,6 +409,12 @@ func TestIssueDecodesLinksSubtasksAndAttachments(t *testing.T) {
 		t.Errorf("subtasks = %#v, want %#v", issue.Subtasks, wantSubtasks)
 	}
 
+	wantParent := &jira.Subtask{Key: "ENG-100", Summary: "Time machine", Type: "Epic",
+		Status: jira.Status{ID: "3", Name: "In Progress", Category: "indeterminate"}}
+	if !reflect.DeepEqual(issue.Parent, wantParent) {
+		t.Errorf("parent = %#v, want %#v", issue.Parent, wantParent)
+	}
+
 	if len(issue.Attachments) != 1 || issue.Attachments[0].Filename != "trace.log" || issue.Attachments[0].Size != 20480 {
 		t.Errorf("attachments = %#v, want one trace.log of 20480 bytes", issue.Attachments)
 	}

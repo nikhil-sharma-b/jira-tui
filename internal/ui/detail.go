@@ -18,7 +18,7 @@ import (
 var detailFields = []string{
 	"summary", "status", "assignee", "reporter", "priority", "issuetype",
 	"labels", "created", "updated", "description", "attachment", "issuelinks",
-	"subtasks",
+	"subtasks", "parent",
 }
 
 // detailTab is one page of the detail pane. The tabs are the jiratui set, less
@@ -370,6 +370,7 @@ func (d *detailPane) renderDetails() []string {
 		{"Reporter", userName(i.Reporter, "None")},
 		{"Priority", priorityName(i.Priority)},
 		{"Type", valueOr(i.Type, "None")},
+		{"Parent", parentName(i.Parent)},
 		{"Labels", labels(i.Labels)},
 		{"Created", ticketTimestamp(i.Created)},
 		{"Updated", ticketTimestamp(i.Updated)},
@@ -470,6 +471,14 @@ func (d *detailPane) renderChildren() []string {
 // relatedItem is how another work item is written wherever one is referred to:
 // its key, its summary, and the state and kind it is in, coloured the way the
 // list colours the same values.
+// parentName shows the parent's key beside its summary, as the related tabs do.
+func parentName(parent *jira.Subtask) string {
+	if parent == nil {
+		return "None"
+	}
+	return keyStyle.Render(parent.Key) + " " + parent.Summary
+}
+
 func relatedItem(key, summary string, status jira.Status, kind string, width int) []string {
 	lines := wrapDetailLine(keyStyle.Render(key)+" "+summary, width)
 	meta := stateStyle.Render(valueOr(status.Name, "None")) + " · " + kindStyle.Render(valueOr(kind, "None"))

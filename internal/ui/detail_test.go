@@ -22,6 +22,7 @@ func detailedIssue() jira.Issue {
 		Reporter: &jira.User{DisplayName: "Grace Hopper"},
 		Priority: &jira.Priority{Name: "Highest"},
 		Type:     "Bug",
+		Parent:   &jira.Subtask{Key: "ENG-100", Summary: "Time machine"},
 		Labels:   []string{"time-travel", "urgent"},
 		Created:  time.Date(2026, 8, 20, 9, 30, 0, 0, time.UTC),
 		Updated:  time.Date(2026, 8, 25, 11, 45, 0, 0, time.UTC),
@@ -534,7 +535,7 @@ func TestBracketsCycleTabsAndEachTabShowsOnlyItsOwnContent(t *testing.T) {
 		avoid []string
 	}{
 		{name: "Info", want: []string{"Repair the flux capacitor", "Diagnosis"}, avoid: []string{"Reporter:", "trace.log"}},
-		{name: "Details", keys: []string{"]"}, want: []string{"Key: ENG-1", "Reporter: Grace Hopper", "Labels: time-travel, urgent"}, avoid: []string{"Diagnosis"}},
+		{name: "Details", keys: []string{"]"}, want: []string{"Key: ENG-1", "Reporter: Grace Hopper", "Parent: ENG-100 Time machine", "Labels: time-travel, urgent"}, avoid: []string{"Diagnosis"}},
 		{name: "Comments", keys: []string{"]"}, want: []string{"No comments."}, avoid: []string{"Diagnosis", "trace.log"}},
 		{name: "Attachments", keys: []string{"]"}, want: []string{"trace.log", "20.0 kB", "text/plain", "Ada Lovelace", "2026-08-20 09:30 UTC"}, avoid: []string{"Diagnosis"}},
 		{name: "Links", keys: []string{"]"}, want: []string{"is blocked by", "ENG-9", "Source a replacement relay", "To Do"}, avoid: []string{"Order the capacitor"}},

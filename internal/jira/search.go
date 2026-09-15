@@ -151,6 +151,22 @@ func (i *Issue) setField(id string, raw json.RawMessage) (bool, error) {
 		}
 		i.Subtasks = subtasks
 		return true, nil
+	case "parent":
+		if isJSONNull(raw) {
+			i.Parent = nil
+			return true, nil
+		}
+		var wire linkedIssueWire
+		if err := json.Unmarshal(raw, &wire); err != nil {
+			return true, err
+		}
+		i.Parent = &Subtask{
+			Key:     wire.Key,
+			Summary: wire.Fields.Summary,
+			Status:  Status{ID: wire.Fields.Status.ID, Name: wire.Fields.Status.Name, Category: wire.Fields.Status.Category.Key},
+			Type:    wire.Fields.IssueType.Name,
+		}
+		return true, nil
 	case "description":
 		if isJSONNull(raw) {
 			i.Description = nil

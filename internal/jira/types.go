@@ -94,6 +94,9 @@ type Issue struct {
 	Comments    []Comment
 	Links       []IssueLink
 	Subtasks    []Subtask
+	// Parent is the item this one sits under -- an epic, or the parent of a
+	// subtask -- and nil when it has none.
+	Parent *Subtask
 	// Raw holds fields we have no typed home for, keyed by field ID, so that
 	// configurable columns can display custom fields without a code change.
 	Raw map[string]any
