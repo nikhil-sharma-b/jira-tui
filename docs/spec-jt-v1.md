@@ -77,8 +77,8 @@ returns to normal mode; a text field is only ever entered deliberately.
     forward through where I've been, so that drilling into linked items is reversible.
 17. As a vim user, I want `/` to search within the loaded pane with `n`/`N`, so that
     in-buffer search means what it means in vim. `/` searches whichever pane has
-    focus -- the list or the detail tab on screen. `:noh` hides the marking until
-    the next `n`/`N`.
+    focus -- the list or the detail tab on screen. `Esc` or `:noh` hides the marking
+    until the next `n`/`N`.
 18. As a vim user, I want `q` to close the current pane and `:q`/`:qa` to quit, so that
     both behave as they do in vim.
 19. As a developer, I want `?` to show a help overlay of the current keymap, so that I

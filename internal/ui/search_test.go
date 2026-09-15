@@ -213,6 +213,18 @@ func TestNohKeepsThePatternForN(t *testing.T) {
 	}
 }
 
+// Esc hides the marking as :noh does, and n still has somewhere to go.
+func TestEscKeepsThePatternForN(t *testing.T) {
+	d := listWith(t, 5)
+
+	search(d, "Work item")
+	d.keys("esc", "n")
+
+	if got := d.selected(); got != "ENG-2" {
+		t.Errorf("n after Esc moved to %q, want ENG-2", got)
+	}
+}
+
 func TestCtrlOReturnsFromAJiraSearchToThePreviousQuery(t *testing.T) {
 	client := &fakeClient{issues: sampleIssues(5)}
 	d := newDriver(t, client, testConfig(t, nil))

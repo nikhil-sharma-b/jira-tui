@@ -541,10 +541,12 @@ func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
 		// an overlay over a picker or a pending editor would otherwise spend the
 		// keypress the user meant for what is underneath.
 		//
-		// It abandons whatever was being typed, chosen or waited on and leaves
-		// everything else -- the rows, the query, the search pattern -- alone.
-		// Nothing is applied on the way out.
+		// It abandons whatever was being typed, chosen or waited on, and hides
+		// the search marks as :noh does, as a Neovim config commonly maps Esc
+		// to. Everything else -- the rows, the query, the search pattern that
+		// n and N go on using -- is left alone. Nothing is applied on the way out.
 		m.help.Hide()
+		m.search.hidden = true
 		m.cancelPendingWrite()
 		m.closePicker()
 		m.closePrompt()
