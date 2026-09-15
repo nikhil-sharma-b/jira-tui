@@ -196,3 +196,37 @@ func TestLeaderSlashSearchesJiraText(t *testing.T) {
 		t.Errorf("<leader>/ searched %q, want %q", got, want)
 	}
 }
+
+// :noh hides the marking but keeps the pattern, so n still has somewhere to go.
+func TestNohKeepsThePatternForN(t *testing.T) {
+	d := listWith(t, 5)
+
+	search(d, "Work item")
+	d.command(":noh")
+	d.keys("n")
+
+	if strings.Contains(d.view(), "not a command") {
+		t.Fatalf(":noh is not a command:\n%s", d.view())
+	}
+	if got := d.selected(); got != "ENG-2" {
+		t.Errorf("n after :noh moved to %q, want ENG-2", got)
+	}
+}
+
+func TestCtrlOReturnsFromAJiraSearchToThePreviousQuery(t *testing.T) {
+	client := &fakeClient{issues: sampleIssues(5)}
+	d := newDriver(t, client, testConfig(t, nil))
+	before := client.requests()[0].JQL
+
+	d.keys("space", "/")
+	d.typeText("flux")
+	d.keys("enter")
+	d.flush()
+	d.keys("ctrl+o")
+	d.flush()
+
+	requests := client.requests()
+	if got := requests[len(requests)-1].JQL; got != before {
+		t.Errorf("Ctrl-o after <leader>/ ran %q, want the previous query %q", got, before)
+	}
+}

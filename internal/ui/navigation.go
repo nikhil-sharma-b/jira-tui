@@ -81,6 +81,18 @@ func (m *Model) jump(direction, count int) tea.Cmd {
 	return m.openKey(key, false)
 }
 
+// jumpBack is Ctrl-o. On the list it first undoes Jira searches, returning to
+// the query each one replaced; after that, and from detail, it walks back
+// through the items visited.
+func (m *Model) jumpBack(count int) tea.Cmd {
+	if m.focus == PaneList && len(m.queryBack) > 0 {
+		query := m.queryBack[len(m.queryBack)-1]
+		m.queryBack = m.queryBack[:len(m.queryBack)-1]
+		return m.runQuery(query)
+	}
+	return m.jump(-1, count)
+}
+
 func (m *Model) goList() {
 	m.listVisible = true
 	m.focus = PaneList

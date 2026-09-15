@@ -25,9 +25,20 @@ import (
 // remembered list of indexes would then point at rows that have shifted.
 type paneSearch struct {
 	pattern string
+	// hidden is :noh -- the matches stop being marked, but the pattern stays
+	// for n and N, which mark them again, as in vim.
+	hidden bool
 }
 
 func (s paneSearch) active() bool { return s.pattern != "" }
+
+// shown is the pattern to mark on screen, empty while :noh has hidden it.
+func (s paneSearch) shown() string {
+	if s.hidden {
+		return ""
+	}
+	return s.pattern
+}
 
 // runSearch takes a pattern typed at / and moves to the first match at or
 // after the selection, as vim does: the row the user is on can be the answer.
@@ -37,7 +48,7 @@ func (m *Model) runSearch(pattern string) tea.Cmd {
 		// makes an accidental / harmless.
 		return nil
 	}
-	m.search.pattern = pattern
+	m.search.pattern, m.search.hidden = pattern, false
 	m.detail.hit = -1
 	return m.moveToMatch(1, 1, true)
 }
@@ -61,7 +72,9 @@ func (m *Model) runJiraSearch(text string) tea.Cmd {
 	query := "text ~ " + jqlString(text) + " ORDER BY updated DESC"
 	// Recorded as the :jql it stands for, so it can be recalled and refined.
 	m.history.add("jql " + query)
-	m.search.pattern = text
+	m.search.pattern, m.search.hidden = text, false
+	// Ctrl-o on the list comes back to the view this search replaced.
+	m.queryBack = append(m.queryBack, m.query)
 	m.goList()
 	return m.runQuery(query)
 }
@@ -83,6 +96,7 @@ func (m *Model) moveToMatch(direction, count int, inclusive bool) tea.Cmd {
 		m.status = errors.New("there is no search pattern")
 		return nil
 	}
+	m.search.hidden = false
 	if m.searchesDetail() {
 		return m.moveToDetailMatch(direction, count, inclusive)
 	}

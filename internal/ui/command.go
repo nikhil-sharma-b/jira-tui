@@ -39,6 +39,8 @@ type command struct {
 var commands = []command{
 	{name: "q", run: func(m *Model, _ string) tea.Cmd { return m.closePane() }},
 	{name: "qa", run: func(m *Model, _ string) tea.Cmd { return tea.Quit }},
+	{name: "noh", run: hideMatches},
+	{name: "nohlsearch", run: hideMatches},
 	{name: "jql", run: runJQL, completeArg: completeSavedQueries},
 	{name: "transition", run: runTransition, completeArg: completeTransitions, liveArgs: liveTransitions},
 	{name: "assign", run: runAssign},
@@ -80,6 +82,13 @@ func (m *Model) runCommand(line string) tea.Cmd {
 func splitCommand(line string) (name, arg string) {
 	name, arg, _ = strings.Cut(strings.TrimSpace(line), " ")
 	return name, strings.TrimSpace(arg)
+}
+
+// hideMatches is :noh. It keeps the pattern, so n and N still work and show
+// the matches again.
+func hideMatches(m *Model, _ string) tea.Cmd {
+	m.search.hidden = true
+	return nil
 }
 
 // runJQL puts a different query on screen, expanding a saved name first.

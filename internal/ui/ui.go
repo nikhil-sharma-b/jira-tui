@@ -105,6 +105,8 @@ type Model struct {
 	zoomed        bool
 	pin           string
 	jumps         jumplist
+	// queryBack holds the queries <leader>/ replaced, most recent last.
+	queryBack []string
 
 	// prompt is the commandline or the search line while one is open, nil in
 	// normal mode. It is paired with the dispatcher's modal state, which is
@@ -592,7 +594,7 @@ func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
 		m.cycleTab(1)
 		return nil
 	case config.ActionJumpBack:
-		return m.jump(-1, count)
+		return m.jumpBack(count)
 	case config.ActionJumpFwd:
 		return m.jump(1, count)
 	case config.ActionReload:
@@ -875,7 +877,7 @@ func (m *Model) View() string {
 	bodyRows := max(m.height-len(footer), 0)
 	var lines []string
 	if detailVisible {
-		lines = boxed(m.detail.view(m.search.pattern), m.width, bodyRows, m.detailTitle(), m.paneHint(config.ActionPaneRight), true)
+		lines = boxed(m.detail.view(m.search.shown()), m.width, bodyRows, m.detailTitle(), m.paneHint(config.ActionPaneRight), true)
 	} else {
 		lines = boxed(m.listPane(inner(m.width), inner(bodyRows)), m.width, bodyRows, listTitle,
 			m.paneHint(config.ActionPaneLeft), true)
@@ -939,7 +941,7 @@ func (m *Model) twoPaneView() string {
 	leftWidth, rightWidth := m.paneWidths()
 	left := boxed(m.listPane(inner(leftWidth), inner(bodyRows)), leftWidth, bodyRows,
 		listTitle, m.paneHint(config.ActionPaneLeft), m.focus == PaneList)
-	right := boxed(m.detail.view(m.search.pattern), rightWidth, bodyRows, m.detailTitle(),
+	right := boxed(m.detail.view(m.search.shown()), rightWidth, bodyRows, m.detailTitle(),
 		m.paneHint(config.ActionPaneRight), m.focus == PaneDetail)
 
 	lines := make([]string, bodyRows)
@@ -1022,7 +1024,7 @@ func (m *Model) rowLines(widths []int, numWidth, width int) []string {
 			if pad := width - ansi.StringWidth(text); pad > 0 {
 				text += strings.Repeat(" ", pad)
 			}
-			lines = append(lines, highlight(text, m.search.pattern, selectedStyle, selectedMatchStyle))
+			lines = append(lines, highlight(text, m.search.shown(), selectedStyle, selectedMatchStyle))
 			continue
 		}
 		text := strings.Repeat(" ", gutterWidth) + noteStyle.Render(number) +
