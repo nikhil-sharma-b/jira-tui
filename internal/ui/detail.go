@@ -110,6 +110,11 @@ type detailPane struct {
 	rows  int
 	lines []string
 	frame int
+	// items are the openable entries the Attachments tab lists, itemLines the
+	// line each starts on, and selected the one Enter opens.
+	items     []openable
+	itemLines []int
+	selected  int
 	// hit is the line the last search jump landed on, -1 when there is none
 	// the next jump can count from.
 	hit int
@@ -128,6 +133,7 @@ func (d *detailPane) fetch(client jira.Client, key string) []tea.Cmd {
 	d.commentsLoading, d.comments, d.commentsErr = true, nil, nil
 	d.childrenLoading, d.children, d.childrenErr = false, nil, nil
 	d.tops = [tabCount]int{}
+	d.selected = 0
 	d.hit = -1
 	d.rereading = false
 	d.request++
@@ -150,9 +156,10 @@ func (d *detailPane) fetch(client jira.Client, key string) []tea.Cmd {
 // reread fetches the open item again without leaving the place the user was
 // reading it at.
 func (d *detailPane) reread(client jira.Client) []tea.Cmd {
-	issue, lines, top, tops := d.issue, d.lines, d.top, d.tops
+	issue, lines, top, tops, selected := d.issue, d.lines, d.top, d.tops, d.selected
 	cmds := d.fetch(client, d.key)
 	if issue != nil {
+		d.selected = selected
 		d.issue, d.lines = issue, lines
 		d.rereading, d.keptTop, d.keptTops = true, top, tops
 		d.keptTops[d.tab] = top
@@ -401,21 +408,83 @@ func (d *detailPane) renderComments() []string {
 	return lines
 }
 
+// renderAttachments lists what can be opened from the item: its attachments,
+// then the images its description embeds, each one selectable. The lines each
+// entry starts on are kept so that moving the selection can scroll to it.
 func (d *detailPane) renderAttachments() []string {
-	if len(d.issue.Attachments) == 0 {
-		return []string{"No attachments."}
-	}
+	d.items = d.openables()
+	d.itemLines = d.itemLines[:0]
+	d.selected = min(max(d.selected, 0), max(len(d.items)-1, 0))
 	var lines []string
-	for index, attachment := range d.issue.Attachments {
-		if index > 0 {
+	if len(d.issue.Attachments) == 0 {
+		lines = append(lines, "No attachments.")
+	}
+	embedded := false
+	for index, item := range d.items {
+		if len(lines) > 0 {
 			lines = append(lines, "")
 		}
-		lines = append(lines, wrapDetailLine(itemKeyStyle.Render(attachment.Filename), d.width)...)
-		meta := attachmentSize(attachment.Size) + " · " + valueOr(attachment.MimeType, "unknown type") +
-			" · " + userName(attachment.Author, "Unknown author") + " · " + attachmentTimestamp(attachment.Created)
-		lines = append(lines, wrapDetailLine(noteStyle.Render(meta), d.width)...)
+		if item.embedded && !embedded {
+			embedded = true
+			lines = append(lines, sectionHeader("Embedded in description", d.width), "")
+		}
+		d.itemLines = append(d.itemLines, len(lines))
+		marker, name := "  ", itemKeyStyle.Render(item.name)
+		if index == d.selected {
+			marker, name = "▸ ", selectedStyle.Render(item.name)
+		}
+		lines = append(lines, indentedLines(marker, name, d.width)...)
+		lines = append(lines, indentedLines("  ", noteStyle.Render(item.meta), d.width)...)
 	}
 	return lines
+}
+
+// moveSelection moves through the openable entries on the Attachments tab,
+// reporting false for a motion that is not one of the selecting ones, which
+// then scrolls the page as it does on every other tab.
+func (d *detailPane) moveSelection(action config.Action, count int) bool {
+	if d.tab != tabAttachments || len(d.items) == 0 {
+		return false
+	}
+	n, last := max(count, 1), len(d.items)-1
+	switch action {
+	case config.ActionDown:
+		d.selected += n
+	case config.ActionUp:
+		d.selected -= n
+	case config.ActionTop:
+		d.selected = max(count-1, 0)
+	case config.ActionBottom:
+		d.selected = last
+		if count > 0 {
+			d.selected = count - 1
+		}
+	default:
+		return false
+	}
+	d.selected = min(max(d.selected, 0), last)
+	d.render()
+	start, end := d.itemLines[d.selected], len(d.lines)
+	if d.selected < last {
+		end = d.itemLines[d.selected+1]
+	}
+	if end > d.top+d.bodyRows() {
+		d.top = end - d.bodyRows()
+	}
+	if start < d.top {
+		d.top = start
+	}
+	d.clamp()
+	return true
+}
+
+// selectedItem is the entry Enter opens, when the Attachments tab is the page
+// on screen and it has one.
+func (d *detailPane) selectedItem() (openable, bool) {
+	if d.issue == nil || d.tab != tabAttachments || d.selected >= len(d.items) {
+		return openable{}, false
+	}
+	return d.items[d.selected], true
 }
 
 func (d *detailPane) renderLinks() []string {
@@ -587,6 +656,9 @@ func (d *detailPane) cycleTab(delta int) {
 }
 
 func (d *detailPane) move(action config.Action, count int) {
+	if d.moveSelection(action, count) {
+		return
+	}
 	n := max(count, 1)
 	half := max(d.bodyRows()/2, 1)
 	switch action {
@@ -748,6 +820,20 @@ func wrapDetailLine(s string, width int) []string {
 		return nil
 	}
 	return strings.Split(ansi.Hardwrap(ansi.Wordwrap(s, width, ""), width, false), "\n")
+}
+
+// indentedLines wraps s beside a two-column gutter: the first line carries
+// marker, and the lines it wraps onto are indented to match.
+func indentedLines(marker, s string, width int) []string {
+	lines := wrapDetailLine(s, max(width-2, 1))
+	for n := range lines {
+		if n == 0 {
+			lines[n] = marker + lines[n]
+		} else {
+			lines[n] = "  " + lines[n]
+		}
+	}
+	return lines
 }
 
 func valueOr(value, absent string) string {

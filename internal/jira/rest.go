@@ -132,6 +132,11 @@ type request struct {
 	body any
 	// out receives the decoded response body when non-nil.
 	out any
+	// sink receives a successful response body as it streams, unbuffered and
+	// uncapped, in place of decoding it into out. Only a 2xx body reaches it,
+	// so the attempts a retry follows never wrote anything; a failure partway
+	// through the body is not an *Error, and backoffFor does not retry it.
+	sink io.Writer
 	// retry allows the exponential backoff loop. Reads set it; writes never
 	// do, whatever the status code -- a duplicated comment or a double
 	// transition is a worse outcome than an error message.
@@ -268,12 +273,23 @@ func (c *REST) attempt(ctx context.Context, r request, body []byte) error {
 		return fmt.Errorf("%s: %w", r.op, err)
 	}
 	req.SetBasicAuth(c.cfg.Email, c.cfg.Token)
-	req.Header.Set("Accept", "application/json")
+	if r.sink == nil {
+		req.Header.Set("Accept", "application/json")
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := c.http.Do(req)
+	client := c.http
+	if r.sink != nil {
+		// The client's timeout covers reading the body, which for a large file
+		// is a function of its size rather than of the site's health. A
+		// download ends when it finishes or when the caller cancels it.
+		streaming := *c.http
+		streaming.Timeout = 0
+		client = &streaming
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		// A cancelled context is the caller changing its mind, not the site
 		// being unreachable; only the latter is an OfflineError.
@@ -283,6 +299,16 @@ func (c *REST) attempt(ctx context.Context, r request, body []byte) error {
 		return &OfflineError{Err: fmt.Errorf("%s: %w", r.op, err)}
 	}
 	defer resp.Body.Close()
+
+	if r.sink != nil && resp.StatusCode < 300 {
+		if _, err := io.Copy(r.sink, resp.Body); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return fmt.Errorf("%s: %w", r.op, ctxErr)
+			}
+			return fmt.Errorf("%s: %w", r.op, err)
+		}
+		return nil
+	}
 
 	got, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
@@ -567,8 +593,27 @@ func (c *REST) SearchUsers(ctx context.Context, key, query string) ([]User, erro
 	return users, nil
 }
 
+// DownloadAttachment streams an attachment's content into dst. The endpoint
+// redirects to Atlassian's media store with a short-lived token in the URL, so
+// the credentials are only ever sent to the site itself.
 func (c *REST) DownloadAttachment(ctx context.Context, attachmentID string, dst Writer) (int64, error) {
-	panic("not implemented")
+	counter := &countingWriter{dst: dst}
+	err := c.do(ctx, request{
+		op: "download attachment", method: http.MethodGet, apiBase: apiRead,
+		path: "/attachment/content/" + url.PathEscape(attachmentID), sink: counter, retry: true,
+	})
+	return counter.n, err
+}
+
+type countingWriter struct {
+	dst Writer
+	n   int64
+}
+
+func (w *countingWriter) Write(p []byte) (int, error) {
+	n, err := w.dst.Write(p)
+	w.n += int64(n)
+	return n, err
 }
 
 // Fields lists the site's field metadata. It is one call, cacheable for a day,

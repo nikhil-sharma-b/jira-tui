@@ -67,6 +67,11 @@ type Options struct {
 	Copy func(string) error
 	// OpenURL hands a URL to the platform browser.
 	OpenURL func(string) error
+	// OpenFile hands a downloaded attachment to the system opener.
+	OpenFile func(string) error
+	// DownloadDir is where attachments are downloaded to before being opened.
+	// It defaults to a directory under the system temporary directory.
+	DownloadDir string
 	// EditorExec defaults to tea.ExecProcess, which releases and restores the
 	// terminal around the configured editor.
 	EditorExec EditorExec
@@ -206,6 +211,11 @@ type Model struct {
 
 	copyText func(string) error
 	openURL  func(string) error
+
+	openFile        func(string) error
+	downloadDir     string
+	download        *download
+	downloadRequest uint64
 }
 
 // New builds the root model. When Pin is set, detail opens full-width with the
@@ -236,7 +246,15 @@ func New(opts Options) (*Model, error) {
 	}
 	openURL := opts.OpenURL
 	if openURL == nil {
-		openURL = openInBrowser
+		openURL = openWithSystem
+	}
+	openFile := opts.OpenFile
+	if openFile == nil {
+		openFile = openWithSystem
+	}
+	downloadDir := opts.DownloadDir
+	if downloadDir == "" {
+		downloadDir = defaultDownloadDir()
 	}
 	debounce := opts.SearchDebounce
 	if debounce <= 0 {
@@ -260,6 +278,8 @@ func New(opts Options) (*Model, error) {
 		drafts:        make(map[draftKey]string),
 		copyText:      copyText,
 		openURL:       openURL,
+		openFile:      openFile,
+		downloadDir:   downloadDir,
 
 		searchDebounce: debounce,
 	}
@@ -439,6 +459,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case integrationMsg:
 		return m, m.handleIntegration(msg)
+
+	case downloadMsg:
+		return m, m.handleDownload(msg)
+
+	case downloadTickMsg:
+		return m, m.handleDownloadTick(msg)
 	}
 	return m, nil
 }
@@ -547,6 +573,7 @@ func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
 		// n and N go on using -- is left alone. Nothing is applied on the way out.
 		m.help.Hide()
 		m.search.hidden = true
+		m.cancelDownload()
 		m.cancelPendingWrite()
 		m.closePicker()
 		m.closePrompt()
@@ -573,7 +600,13 @@ func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
 	case config.ActionQuit:
 		return tea.Quit
 	case config.ActionOpen:
+		if m.focus == PaneDetail && m.detail.open && m.detail.tab == tabAttachments {
+			return m.openSelected()
+		}
 		return m.openDetail()
+	case config.ActionGoAttachments:
+		m.goAttachments()
+		return nil
 	case config.ActionPaneLeft:
 		m.moveFocus(PaneList)
 		return nil
@@ -1060,6 +1093,9 @@ func (m *Model) rowLines(widths []int, numWidth, width int) []string {
 func (m *Model) statusLine() string {
 	if m.status != nil {
 		return m.withPending(errorStyle.Render(m.fit(m.withOfflineMarker(m.status.Error()))))
+	}
+	if m.download != nil {
+		return m.withPending(statusStyle.Render(m.fit(m.withOfflineMarker(m.downloadProgress()))))
 	}
 	if m.notice != "" {
 		return m.withPending(statusStyle.Render(m.fit(m.withOfflineMarker(m.notice))))

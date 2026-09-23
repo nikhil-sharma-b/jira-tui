@@ -537,7 +537,7 @@ func TestBracketsCycleTabsAndEachTabShowsOnlyItsOwnContent(t *testing.T) {
 		{name: "Info", want: []string{"Repair the flux capacitor", "Diagnosis"}, avoid: []string{"Reporter:", "trace.log"}},
 		{name: "Details", keys: []string{"]"}, want: []string{"Key: ENG-1", "Reporter: Grace Hopper", "Parent: ENG-100 Time machine", "Labels: time-travel, urgent"}, avoid: []string{"Diagnosis"}},
 		{name: "Comments", keys: []string{"]"}, want: []string{"No comments."}, avoid: []string{"Diagnosis", "trace.log"}},
-		{name: "Attachments", keys: []string{"]"}, want: []string{"trace.log", "20.0 kB", "text/plain", "Ada Lovelace", "2026-08-20 09:30 UTC"}, avoid: []string{"Diagnosis"}},
+		{name: "Attachments", keys: []string{"]"}, want: []string{"trace.log", "20.0 kB", "text/plain", "Ada Lovelace", "2026-08-20 09:30"}, avoid: []string{"Diagnosis"}},
 		{name: "Links", keys: []string{"]"}, want: []string{"is blocked by", "ENG-9", "Source a replacement relay", "To Do"}, avoid: []string{"Order the capacitor"}},
 		{name: "Subtasks", keys: []string{"]"}, want: []string{"ENG-4", "Order the capacitor", "Done"}, avoid: []string{"Source a replacement relay"}},
 	}

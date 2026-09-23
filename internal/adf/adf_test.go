@@ -231,7 +231,7 @@ func TestMediaNodesClassifiesAttachmentsAndMediaServiceItems(t *testing.T) {
 	want := []adf.Media{
 		{ID: "101", Filename: "diagram.png", IsAttachment: true},
 		{ID: "media-1", Filename: "remote.png", IsAttachment: false},
-		{Filename: "external.png", IsAttachment: false},
+		{Filename: "external.png", IsAttachment: false, URL: "https://example.test/image.png"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("MediaNodes() = %#v, want %#v", got, want)

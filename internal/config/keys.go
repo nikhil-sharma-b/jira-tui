@@ -34,6 +34,8 @@ const (
 	ActionPrevTab  Action = "previous_tab"
 	ActionNextTab  Action = "next_tab"
 
+	ActionGoAttachments Action = "go_attachments"
+
 	ActionSearchInPane Action = "search_in_pane"
 	ActionSearchNext   Action = "search_next"
 	ActionSearchPrev   Action = "search_prev"
@@ -105,6 +107,8 @@ func DefaultKeymap() Keymap {
 		ActionGoDetail: "gd",
 		ActionPrevTab:  "[",
 		ActionNextTab:  "]",
+
+		ActionGoAttachments: "ga",
 
 		ActionSearchInPane: "/",
 		ActionSearchNext:   "n",

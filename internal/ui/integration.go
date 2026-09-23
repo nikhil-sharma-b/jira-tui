@@ -74,7 +74,9 @@ func copyToClipboard(text string) error {
 	return err
 }
 
-func openInBrowser(url string) error {
+// openWithSystem hands a URL or a file path to the platform opener, which picks
+// the browser for one and the viewer for the other.
+func openWithSystem(url string) error {
 	var command *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":

@@ -6,7 +6,7 @@ Built for one workflow: a tmux session per story, several of them open at once.
 
 - **Single static Go binary.** Fast start, small footprint, many sessions.
 - **Direct pane addressing.** `gl` / `gd` jump to the list and the detail pane,
-  while `[` / `]` cycle the detail tabs. `Esc` always returns to normal mode; no widget
+  `ga` to the attachments, while `[` / `]` cycle the detail tabs. `Esc` always returns to normal mode; no widget
   swallows it.
 - **Speaks REST directly**, not a CLI subprocess per action, so one keep-alive
   connection serves the session and HTTP status codes stay visible. `acli` remains

@@ -724,6 +724,9 @@ type Media struct {
 	ID           string
 	Filename     string
 	IsAttachment bool
+	// URL is where external media lives. It is set only for media linked from
+	// outside Jira, which opens in the browser rather than downloading.
+	URL string
 }
 
 // MediaNodes lists the media referenced by a document, so the UI can offer
@@ -738,11 +741,15 @@ func MediaNodes(doc []byte) ([]Media, error) {
 	var walk func(Node)
 	walk = func(n Node) {
 		if n.Type == "media" || n.Type == "mediaInline" {
-			media = append(media, Media{
+			m := Media{
 				ID:           stringAttr(n.Attrs, "id"),
 				Filename:     mediaFilename(n),
 				IsAttachment: isAttachment(n),
-			})
+			}
+			if stringAttr(n.Attrs, "type") == "external" {
+				m.URL = stringAttr(n.Attrs, "url")
+			}
+			media = append(media, m)
 		}
 		for _, child := range n.Content {
 			walk(child)

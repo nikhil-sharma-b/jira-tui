@@ -108,6 +108,15 @@ func (m *Model) goDetail() {
 	m.resizePanes()
 }
 
+// goAttachments reveals and focuses the detail pane on its Attachments tab.
+func (m *Model) goAttachments() {
+	if !m.detail.open {
+		return
+	}
+	m.goDetail()
+	m.detail.setTab(tabAttachments)
+}
+
 // cycleTab reveals and focuses the detail pane, then moves one tab in the
 // requested direction.
 func (m *Model) cycleTab(delta int) {

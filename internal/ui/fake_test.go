@@ -74,6 +74,11 @@ type fakeClient struct {
 	TransitionCalls []struct{ Key, ID string }
 	transitionErr   error
 
+	downloads     map[string]string
+	downloadErr   error
+	downloadBlock bool
+	DownloadCalls []string
+
 	// users answers an assignable-user search per query, so a test can make the
 	// server return something a local filter over the previous answer could not
 	// have produced -- which is how "the search really goes to Jira" is
@@ -362,8 +367,32 @@ func (c *fakeClient) assignCalls() []struct{ Key, AccountID string } {
 	return append([]struct{ Key, AccountID string }(nil), c.AssignCalls...)
 }
 
-func (c *fakeClient) DownloadAttachment(context.Context, string, jira.Writer) (int64, error) {
-	panic("ui list pane called DownloadAttachment")
+// DownloadAttachment writes the content named for the attachment. A failure
+// in downloadErr is returned after half the content has been written, which is
+// the partial file the UI must not leave behind; downloadBlock holds the
+// download open until it is cancelled.
+func (c *fakeClient) DownloadAttachment(ctx context.Context, id string, dst jira.Writer) (int64, error) {
+	c.mu.Lock()
+	c.DownloadCalls = append(c.DownloadCalls, id)
+	content, err, block := c.downloads[id], c.downloadErr, c.downloadBlock
+	c.mu.Unlock()
+	if err != nil {
+		n, _ := dst.Write([]byte(content[:len(content)/2]))
+		return int64(n), err
+	}
+	if block {
+		n, _ := dst.Write([]byte(content[:len(content)/2]))
+		<-ctx.Done()
+		return int64(n), ctx.Err()
+	}
+	n, err := dst.Write([]byte(content))
+	return int64(n), err
+}
+
+func (c *fakeClient) downloadRequests() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.DownloadCalls...)
 }
 func (c *fakeClient) Myself(context.Context) (*jira.User, error) {
 	c.mu.Lock()
