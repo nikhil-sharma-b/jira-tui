@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,15 @@ type Terminal struct {
 	// allow-passthrough being on, without which tmux drops every graphics
 	// command on the floor.
 	Tmux, Passthrough bool
+	// Sixel is a terminal that draws sixel. Inside tmux it is tmux that
+	// draws it, which takes both TmuxSixel, a tmux built with sixel, and a
+	// terminal tmux knows to have it.
+	Sixel, TmuxSixel bool
+	// SixelColors is how many colour registers sixel has, zero when the
+	// terminal did not say.
+	SixelColors int
+	// TmuxSilent is a tmux that would not say what it supports.
+	TmuxSilent bool
 }
 
 // rendererKind is how the preview draws an image.
@@ -33,6 +43,7 @@ type rendererKind int
 const (
 	drawHalfBlocks rendererKind = iota
 	drawKitty
+	drawSixel
 )
 
 // renderer is the images setting resolved against the terminal.
@@ -46,9 +57,10 @@ type renderer struct {
 	err error
 }
 
-// graphicsSide bounds the PNG sent to a kitty terminal. It is about a large
-// screen's width, so a fullscreen preview is drawn at close to the screen's
-// resolution, while the transfer through tmux stays a moment.
+// graphicsSide bounds the PNG sent to a kitty terminal, and the copy a sixel
+// is encoded from. It is about a large screen's width, so a fullscreen preview
+// is drawn at close to the screen's resolution, while the transfer through
+// tmux stays a moment.
 const graphicsSide = 2560
 
 var errNoPassthrough = errors.New("tmux allow-passthrough is off; " +
@@ -56,24 +68,53 @@ var errNoPassthrough = errors.New("tmux allow-passthrough is off; " +
 
 // chooseRenderer resolves the images setting. An explicit kitty is trusted
 // even when the terminal did not answer for it -- the user may know better
-// than a query -- except inside a tmux that would drop every command.
+// than a query -- except inside a tmux that would drop every command. An
+// explicit sixel is not: every sixel terminal says so when asked, so one that
+// does not is missing something the user can be told about.
+//
+// auto prefers kitty to sixel, since kitty sends the image once and sixel is
+// encoded again for every size; sixel is then preferred to half-blocks, even
+// in a kitty terminal that tmux's passthrough is keeping images from.
 func chooseRenderer(setting string, t Terminal) renderer {
+	kittyBlocked := t.Tmux && !t.Passthrough
 	switch setting {
 	case config.ImagesKitty:
-		if t.Tmux && !t.Passthrough {
+		if kittyBlocked {
 			return renderer{kind: drawKitty, err: fmt.Errorf("images = %q: %w", config.ImagesKitty, errNoPassthrough)}
 		}
 		return renderer{kind: drawKitty}
+	case config.ImagesSixel:
+		if err := whyNoSixel(t); err != nil {
+			return renderer{kind: drawSixel, err: fmt.Errorf("images = %q: %w", config.ImagesSixel, err)}
+		}
+		return renderer{kind: drawSixel}
 	case config.ImagesAuto:
 		switch {
-		case !t.Kitty:
-		case t.Tmux && !t.Passthrough:
-			return renderer{note: "half-blocks: " + errNoPassthrough.Error()}
-		default:
+		case t.Kitty && !kittyBlocked:
 			return renderer{kind: drawKitty}
+		case whyNoSixel(t) == nil:
+			return renderer{kind: drawSixel}
+		case t.Kitty:
+			return renderer{note: "half-blocks: " + errNoPassthrough.Error()}
 		}
 	}
 	return renderer{}
+}
+
+// whyNoSixel is why the terminal cannot be drawn sixel, nil when it can.
+func whyNoSixel(t Terminal) error {
+	switch {
+	case t.TmuxSilent:
+		return errors.New("tmux would not say whether it draws sixel")
+	case t.Tmux && !t.TmuxSixel:
+		return errors.New("tmux was built without sixel support (#{sixel_support} is 0); tmux 3.4 or later configured with --enable-sixel has it")
+	case t.Tmux && !t.Sixel:
+		return errors.New("tmux does not know the terminal draws sixel; " +
+			"`set -as terminal-features ',<TERM>:sixel'` tells it")
+	case !t.Sixel:
+		return errors.New("the terminal does not report sixel support")
+	}
+	return nil
 }
 
 // probeTerminal finds out what the images setting needs to know, and nothing
@@ -83,30 +124,57 @@ func chooseRenderer(setting string, t Terminal) renderer {
 // the client is. The terminal is not queried there: tmux answers the device
 // attributes itself, at once, so the terminal's own answer to the graphics
 // query would arrive after the probe had stopped reading, as keys.
+//
+// Sixel is asked about the same way inside tmux and out, since tmux answers
+// the colour registers and the device attributes itself, for the sixel it
+// draws on the terminal's behalf. What tmux cannot say that way is whether
+// the terminal outside draws sixel, so it is asked for the features it knows
+// the terminal by.
 func probeTerminal(setting string) Terminal {
-	if setting != config.ImagesAuto && setting != config.ImagesKitty {
+	switch setting {
+	case config.ImagesAuto, config.ImagesKitty, config.ImagesSixel:
+	default:
 		return Terminal{}
 	}
 	if os.Getenv("TMUX") == "" {
-		return Terminal{Kitty: setting == config.ImagesAuto && queryKitty() && drawsPlaceholders(os.Getenv)}
+		if setting == config.ImagesKitty {
+			// Trusted without asking; see chooseRenderer.
+			return Terminal{}
+		}
+		kitty := setting == config.ImagesAuto
+		a := queryTerminal(kitty)
+		return Terminal{
+			Kitty: kitty && a.Kitty && drawsPlaceholders(os.Getenv),
+			Sixel: a.Sixel, SixelColors: a.SixelColors,
+		}
 	}
 	t := Terminal{Tmux: true}
 	args := []string{"display-message", "-p"}
 	if pane := os.Getenv("TMUX_PANE"); pane != "" {
 		args = append(args, "-t", pane)
 	}
-	out, err := exec.Command("tmux", append(args, "#{allow-passthrough}\t#{client_termname}\t#{client_termtype}")...).Output()
+	out, err := exec.Command("tmux", append(args,
+		"#{allow-passthrough}\t#{sixel_support}\t#{client_termfeatures}\t#{client_termname}\t#{client_termtype}")...).Output()
 	if err != nil {
 		// tmux would not say. An explicit kitty is then tried rather than
 		// refused over a passthrough that may well be on; auto knows no
 		// terminal name, so draws half-blocks either way.
 		t.Passthrough = true
+		t.TmuxSilent = true
 		return t
 	}
 	fields := strings.Split(strings.TrimSpace(string(out)), "\t")
+	for len(fields) < 5 {
+		fields = append(fields, "")
+	}
 	t.Passthrough = fields[0] == "on" || fields[0] == "all"
-	for _, name := range fields[1:] {
+	t.TmuxSixel = fields[1] == "1"
+	t.Sixel = t.TmuxSixel && slices.Contains(strings.Split(fields[2], ","), "sixel")
+	for _, name := range fields[3:] {
 		t.Kitty = t.Kitty || kittyTerminal(name)
+	}
+	if t.Sixel && setting != config.ImagesKitty {
+		t.SixelColors = queryTerminal(false).SixelColors
 	}
 	return t
 }
@@ -129,35 +197,38 @@ func kittyTerminal(name string) bool {
 // the device attributes at once; this only bounds one that never does.
 const probeTimeout = time.Second
 
-// queryKitty asks the terminal whether it speaks kitty graphics, reading the
-// answer from the controlling terminal in raw mode so it is not echoed and
-// arrives without waiting for Enter.
-func queryKitty() bool {
+// queryTerminal asks the terminal what it draws images with, and whether it
+// speaks kitty graphics when kitty is set, reading the answer from the
+// controlling terminal in raw mode so it is not echoed and arrives without
+// waiting for Enter. A terminal that cannot be asked draws nothing but
+// half-blocks.
+func queryTerminal(kitty bool) imageview.Answers {
+	var none imageview.Answers
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 	if err != nil {
-		return false
+		return none
 	}
 	defer tty.Close()
 	// Without a deadline a terminal that never answers would hang startup.
 	if tty.SetReadDeadline(time.Now().Add(probeTimeout)) != nil {
-		return false
+		return none
 	}
 	// The descriptor is borrowed through SyscallConn, not Fd: Fd puts the
 	// file back in blocking mode, and the deadline with it out of action.
 	conn, err := tty.SyscallConn()
 	if err != nil {
-		return false
+		return none
 	}
 	var state *term.State
 	if err := conn.Control(func(fd uintptr) { state, err = term.MakeRaw(fd) }); err != nil || state == nil {
-		return false
+		return none
 	}
 	defer conn.Control(func(fd uintptr) { term.Restore(fd, state) })
-	if _, err := tty.WriteString(imageview.KittyQuery()); err != nil {
-		return false
+	if _, err := tty.WriteString(imageview.Query(kitty)); err != nil {
+		return none
 	}
-	ok, _ := imageview.AnswersKitty(tty)
-	return ok
+	a, _ := imageview.ReadAnswers(tty)
+	return a
 }
 
 // output is the terminal bubbletea draws on, shared with the graphics

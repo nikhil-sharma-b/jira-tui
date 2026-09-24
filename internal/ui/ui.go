@@ -411,8 +411,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list.rows = m.rows()
 		m.list.clamp()
 		m.resizePanes()
-		m.placePreview()
-		return m, nil
+		return m, m.placePreview()
 
 	case tea.KeyMsg:
 		return m, m.handleKey(msg)
@@ -502,6 +501,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case downloadMsg:
 		return m, m.handleDownload(msg)
+
+	case sixelMsg:
+		return m, m.handleSixel(msg)
 
 	case downloadTickMsg:
 		return m, m.handleDownloadTick(msg)

@@ -30,6 +30,33 @@ type imagePreview struct {
 	// the placeholders drawn must match.
 	kitty                  *imageview.Kitty
 	placedCols, placedRows int
+	// sixel is the image as sixel, nil when it is not drawn that way.
+	sixel *sixelDrawing
+}
+
+// sixelDrawing is a preview's image as sixel: box is the size the overlay
+// wants it at, and seq the image encoded at that size, empty until it is.
+// One encoding runs at a time, busy while it does, so dragging a window's
+// edge does not start one for every size it passes through.
+type sixelDrawing struct {
+	box  sixelBox
+	seq  string
+	busy bool
+}
+
+// sixelBox is the size a sixel is drawn at: its pixels, and the cells they
+// cover.
+type sixelBox struct {
+	width, height int
+	cols, rows    int
+}
+
+// sixelMsg is an encoding finished off the update loop, for the preview and
+// the box it was started for.
+type sixelMsg struct {
+	preview *imagePreview
+	box     sixelBox
+	seq     string
 }
 
 // previewable reports whether an attachment is an image p can draw. The MIME
@@ -94,35 +121,42 @@ func (m *Model) keyFor(a config.Action) string {
 	return string(a)
 }
 
-// decodeImage reads the downloaded file, keeping a PNG of at most pngSide
-// for a terminal that draws pixels when pngSide is not zero. Decoding and the
-// downscale it ends with run in the download's command, off the update loop,
-// so a large screenshot never stalls the screen.
-func decodeImage(path string, pngSide int) (*imageview.Image, error) {
+// decodeImage reads the downloaded file for the renderer that will draw it:
+// a kitty terminal is sent a PNG, and a sixel one is encoded from a copy near
+// the screen's resolution. Decoding and the downscale it ends with run in the
+// download's command, off the update loop, so a large screenshot never stalls
+// the screen.
+func decodeImage(path string, kind rendererKind) (*imageview.Image, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	if pngSide > 0 {
-		return imageview.DecodeForGraphics(f, pngSide)
+	switch kind {
+	case drawKitty:
+		return imageview.DecodeForGraphics(f, graphicsSide)
+	case drawSixel:
+		return imageview.DecodeForSixel(f, graphicsSide)
 	}
 	return imageview.Decode(f)
 }
 
 // openPreview puts the overlay up on a decoded image. A kitty terminal is
-// sent the image now, once; everything after is placing it.
-func (m *Model) openPreview(name string, img *imageview.Image) {
+// sent the image now, once; everything after is placing it. A sixel one is
+// sent it in the frame, once it is encoded for the overlay's size.
+func (m *Model) openPreview(name string, img *imageview.Image) tea.Cmd {
 	m.preview = &imagePreview{name: name, image: img}
-	if m.renderer.kind != drawKitty || img.PNG == nil {
-		return
+	switch {
+	case m.renderer.kind == drawKitty && img.PNG != nil:
+		k := imageview.Kitty{ID: newImageID(), Tmux: m.terminal.Tmux}
+		for _, seq := range k.Transmit(img.PNG) {
+			m.writeGraphics(seq)
+		}
+		m.preview.kitty = &k
+	case m.renderer.kind == drawSixel:
+		m.preview.sixel = &sixelDrawing{}
 	}
-	k := imageview.Kitty{ID: newImageID(), Tmux: m.terminal.Tmux}
-	for _, seq := range k.Transmit(img.PNG) {
-		m.writeGraphics(seq)
-	}
-	m.preview.kitty = &k
-	m.placePreview()
+	return m.placePreview()
 }
 
 // newImageID is a fresh ID for kitty to hold an image under. It is random
@@ -134,12 +168,18 @@ func newImageID() uint32 {
 	return (1+(r>>8)%255)<<24 | (1 + r%255)
 }
 
-// placePreview places a kitty preview's image to fill the overlay as it now
-// is, when that differs from where it was last placed.
-func (m *Model) placePreview() {
+// placePreview fits the preview's image to the overlay as it now is, when
+// that differs from what it was last fitted to: a kitty image is placed
+// again, and a sixel encoded again, off the update loop.
+func (m *Model) placePreview() tea.Cmd {
 	p := m.preview
-	if p == nil || p.kitty == nil {
-		return
+	switch {
+	case p == nil:
+		return nil
+	case p.sixel != nil:
+		return m.encodeSixel()
+	case p.kitty == nil:
+		return nil
 	}
 	cols, rows := m.previewBox()
 	cols = min(cols, imageview.MaxPlaceholderCells)
@@ -147,21 +187,93 @@ func (m *Model) placePreview() {
 	cellWidth, cellHeight := m.cellSize()
 	cols, rows = imageview.FitCells(p.image.Width, p.image.Height, cols, rows, cellWidth, cellHeight)
 	if cols == 0 || (cols == p.placedCols && rows == p.placedRows) {
-		return
+		return nil
 	}
 	m.writeGraphics(p.kitty.Place(cols, rows))
 	p.placedCols, p.placedRows = cols, rows
 	// The placeholders drawn must name the cells just placed.
 	p.lines = nil
+	return nil
+}
+
+// assumedCellWidth x assumedCellHeight is the cell size in pixels a sixel is
+// sized for when the terminal does not say: a common one for a 10-11pt font.
+const assumedCellWidth, assumedCellHeight = 10, 20
+
+// maxSixelColors bounds the palette a sixel is quantised to, whatever the
+// terminal reports: past it, encoding takes longer without a screenshot
+// looking any different.
+const maxSixelColors = 1024
+
+// encodeSixel starts the preview's image encoding as sixel for the overlay as
+// it now is. What was encoded for another size is dropped at once, so the
+// frame never draws an image where it no longer fits.
+func (m *Model) encodeSixel() tea.Cmd {
+	p := m.preview
+	cols, rows := m.previewBox()
+	cellWidth, cellHeight := m.cellSize()
+	if cellWidth <= 0 || cellHeight <= 0 {
+		cellWidth, cellHeight = assumedCellWidth, assumedCellHeight
+	}
+	var box sixelBox
+	box.width, box.height = imageview.SixelFit(p.image.Width, p.image.Height, cols*cellWidth, rows*cellHeight)
+	box.cols, box.rows = ceilDiv(box.width, cellWidth), ceilDiv(box.height, cellHeight)
+	if box != p.sixel.box {
+		p.sixel.box, p.sixel.seq, p.lines = box, "", nil
+	}
+	if p.sixel.busy || p.sixel.seq != "" || box.width == 0 {
+		return nil
+	}
+	p.sixel.busy = true
+	img, colors := p.image, m.terminal.SixelColors
+	if colors <= 0 {
+		// The terminal did not say. 256 is what sixel terminals commonly
+		// have, and xterm's default.
+		colors = 256
+	}
+	colors = min(colors, maxSixelColors)
+	return func() tea.Msg {
+		return sixelMsg{preview: p, box: box, seq: img.Sixel(box.width, box.height, colors)}
+	}
+}
+
+// ceilDiv is a / b rounded up, how many cells a run of pixels touches.
+func ceilDiv(a, b int) int { return (a + b - 1) / b }
+
+// handleSixel takes a finished encoding. One for a preview since closed is
+// dropped; one for a size since left behind starts the encoding for the size
+// the overlay is now.
+func (m *Model) handleSixel(msg sixelMsg) tea.Cmd {
+	p := m.preview
+	if p == nil || p != msg.preview {
+		return nil
+	}
+	p.sixel.busy = false
+	if msg.box != p.sixel.box {
+		return m.encodeSixel()
+	}
+	p.sixel.seq = msg.seq
+	return nil
 }
 
 // closePreview takes the overlay down, and a kitty image out of the terminal
 // with it, data and all, so no image outlives its preview.
-func (m *Model) closePreview() {
-	if m.preview != nil && m.preview.kitty != nil {
-		m.writeGraphics(m.preview.kitty.Delete())
-	}
+//
+// A sixel is part of the screen, so the screen underneath is cleared and
+// painted whole: bubbletea skips the lines of a frame that match the last
+// one, and a line of the pane that matched one of the blank lines under the
+// image would leave the image showing there.
+func (m *Model) closePreview() tea.Cmd {
+	p := m.preview
 	m.preview = nil
+	switch {
+	case p == nil:
+	case p.kitty != nil:
+		m.writeGraphics(p.kitty.Delete())
+	case p.sixel != nil:
+		return tea.ClearScreen
+	}
+	return nil
 }
 
 // previewBox is the room inside the overlay's frame for the image, less the
@@ -182,7 +294,7 @@ func (m *Model) previewBox() (cols, rows int) {
 func (m *Model) handlePreviewAction(action config.Action) tea.Cmd {
 	switch action {
 	case config.ActionNormalMode, config.ActionClosePane:
-		m.closePreview()
+		return m.closePreview()
 	case config.ActionQuit:
 		m.closePreview()
 		return tea.Quit
@@ -198,9 +310,17 @@ func (m *Model) previewView() string {
 	cols, rows := m.previewBox()
 	if p.lines == nil || p.cols != cols || p.rows != rows {
 		p.cols, p.rows = cols, rows
-		if p.kitty != nil {
+		switch {
+		case p.kitty != nil:
 			p.lines = p.kitty.Placeholders(p.placedCols, p.placedRows)
-		} else {
+		case p.sixel != nil:
+			// The sixel is drawn over blank cells, which are what the frame
+			// holds where it lies.
+			p.lines = make([]string, p.sixel.box.rows)
+			for i := range p.lines {
+				p.lines[i] = strings.Repeat(" ", p.sixel.box.cols)
+			}
+		default:
 			p.lines = p.image.HalfBlocks(cols, rows, m.colorProfile)
 		}
 		if p.lines == nil {
@@ -213,11 +333,15 @@ func (m *Model) previewView() string {
 		body = append(body, noteStyle.Render(ansi.Truncate(m.renderer.note, cols, "…")))
 	}
 	body = append(body, make([]string, (rows-len(p.lines))/2, rows)...)
+	top := len(body)
 	for _, line := range p.lines {
 		body = append(body, strings.Repeat(" ", (cols-ansi.StringWidth(line))/2)+line)
 	}
 	size := fmt.Sprintf("%d×%d", p.image.Width, p.image.Height)
 	lines := boxed(body, m.width, bodyRows, p.name, size, true)
+	if p.sixel != nil && p.sixel.seq != "" && len(p.lines) > 0 {
+		lines[1+top+len(p.lines)-1] += drawSixelAt(p.sixel.seq, 1+top, 1+(cols-p.sixel.box.cols)/2)
+	}
 
 	hint := m.keyFor(config.ActionNormalMode)
 	if keys, ok := m.bindings.Display(config.ActionClosePane); ok {
@@ -225,4 +349,17 @@ func (m *Model) previewView() string {
 	}
 	footer := m.withPending(statusStyle.Render(m.fit(p.name + " · " + size + " px · " + hint + " close")))
 	return strings.Join(append(lines, footer), "\n")
+}
+
+// drawSixelAt is seq drawn from the cell row, col, counted from 0, with the
+// cursor saved before and restored after, so what follows in the frame lands
+// where it would have.
+//
+// It is appended to the last line the image covers rather than the first: a
+// terminal clears the part of an image that text is later written over, so
+// every blank line under it has to be written before it is drawn. bubbletea
+// then writes the lines again only when they change, which in the overlay is
+// only on a resize, when the image changes with them.
+func drawSixelAt(seq string, row, col int) string {
+	return "\x1b7" + fmt.Sprintf("\x1b[%d;%dH", row+1, col+1) + seq + "\x1b8"
 }

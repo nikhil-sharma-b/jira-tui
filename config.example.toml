@@ -16,8 +16,9 @@ leader = " "
 # How p previews an image attachment: "halfblocks" draws it with coloured
 # half-block cells in any terminal, tmux included; "kitty" draws it at full
 # resolution in kitty and ghostty (inside tmux, set -g allow-passthrough on);
-# "auto" picks kitty when the terminal supports it, else half-blocks; "off"
-# turns p off.
+# "sixel" draws it at full resolution in foot and other sixel terminals (inside
+# tmux 3.4+ built with sixel); "auto" picks kitty when the terminal supports
+# it, else sixel, else half-blocks; "off" turns p off.
 images = "auto"
 # What R reloads: "focused" reloads only the focused pane (the list reruns its
 # query, the detail pane rereads its work item); "both" reloads the list and

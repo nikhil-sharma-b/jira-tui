@@ -3,12 +3,13 @@
 // scale again cheaply; rendering then fits that copy to whatever size the
 // screen is now, which is what lets a resize simply redraw.
 //
-// There are two renderers. Half-blocks work everywhere: each cell is two square
-// pixels, the upper one in the foreground colour of ▀ and the lower one in the
-// background. It is ordinary cell content, so it works in any terminal and
-// survives anything tmux does to the screen. Kitty sends the pixels to a
+// There are three renderers. Half-blocks work everywhere: each cell is two
+// square pixels, the upper one in the foreground colour of ▀ and the lower one
+// in the background. It is ordinary cell content, so it works in any terminal
+// and survives anything tmux does to the screen. Kitty sends the pixels to a
 // terminal that speaks the kitty graphics protocol, which draws them at its
-// own resolution.
+// own resolution. Sixel encodes them, in the terminal's palette, for one that
+// draws sixel, and for tmux, which draws them on its behalf.
 package imageview
 
 import (
@@ -30,7 +31,8 @@ import (
 	"github.com/muesli/termenv"
 )
 
-// MaxSide bounds the copy kept for rendering. It is larger than any terminal
+// MaxSide bounds the copy kept for rendering, except one decoded for sixel.
+// It is larger than any terminal
 // is wide in cells or tall in half-cells, so the copy never limits what can be
 // shown, while scaling it again on a resize stays well under a frame.
 const MaxSide = 1024
@@ -48,7 +50,7 @@ var (
 
 // Image is a decoded picture: its size as stored in the file, which is what
 // the user is told, and a copy of at most MaxSide on its longer side, which is
-// what is drawn.
+// what is drawn -- larger when decoded for sixel.
 type Image struct {
 	Width, Height int
 	pixels        *image.RGBA
@@ -60,7 +62,7 @@ type Image struct {
 // Decode reads a PNG, JPEG or GIF. The header is read first, so an image too
 // large to hold is refused before any of its pixels are.
 func Decode(r io.Reader) (*Image, error) {
-	return decode(r, 0)
+	return decode(r, MaxSide, 0)
 }
 
 // DecodeForGraphics is Decode that also keeps the image as a PNG of at most
@@ -68,10 +70,17 @@ func Decode(r io.Reader) (*Image, error) {
 // draws them at its own resolution. Every format is encoded afresh, so the
 // terminal is sent one format, and never more pixels than it can show.
 func DecodeForGraphics(r io.Reader, maxSide int) (*Image, error) {
-	return decode(r, maxSide)
+	return decode(r, MaxSide, maxSide)
 }
 
-func decode(r io.Reader, pngSide int) (*Image, error) {
+// DecodeForSixel is Decode that keeps a copy of up to maxSide on its longer
+// side in place of MaxSide, since a sixel is drawn from that copy at the
+// screen's own resolution.
+func DecodeForSixel(r io.Reader, maxSide int) (*Image, error) {
+	return decode(r, maxSide, 0)
+}
+
+func decode(r io.Reader, keptSide, pngSide int) (*Image, error) {
 	var header bytes.Buffer
 	cfg, _, err := image.DecodeConfig(io.TeeReader(r, &header))
 	if err != nil {
@@ -91,7 +100,7 @@ func decode(r io.Reader, pngSide int) (*Image, error) {
 		return nil, err
 	}
 	width, height := src.Bounds().Dx(), src.Bounds().Dy()
-	keptWidth, keptHeight := bound(width, height, MaxSide)
+	keptWidth, keptHeight := bound(width, height, keptSide)
 	img := &Image{Width: width, Height: height, pixels: scale(src, keptWidth, keptHeight)}
 	if pngSide > 0 {
 		if img.PNG, err = encodeScaled(src, pngSide); err != nil {

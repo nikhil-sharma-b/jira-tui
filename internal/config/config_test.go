@@ -168,13 +168,6 @@ func TestLoadErrorsNameTheOffendingKey(t *testing.T) {
 			wantKey:  "images",
 		},
 		{
-			// Reserved for the renderer a later version adds, and refused
-			// until it exists rather than silently meaning something else.
-			name:     "image mode not built yet",
-			contents: topLevel("images = \"sixel\"\n"),
-			wantKey:  "images",
-		},
-		{
 			name:     "unknown reload mode",
 			contents: topLevel("reload = \"list\"\n"),
 			wantKey:  "reload",
@@ -197,13 +190,15 @@ func TestLoadErrorsNameTheOffendingKey(t *testing.T) {
 	}
 }
 
-func TestImagesAcceptsKitty(t *testing.T) {
-	cfg, err := config.Load(write(t, topLevel("images = \"kitty\"\n"), 0o600))
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
-	if cfg.Images != config.ImagesKitty {
-		t.Errorf("images = %q, want %q", cfg.Images, config.ImagesKitty)
+func TestImagesAcceptsEachRenderer(t *testing.T) {
+	for _, mode := range []string{config.ImagesKitty, config.ImagesSixel} {
+		cfg, err := config.Load(write(t, topLevel("images = \""+mode+"\"\n"), 0o600))
+		if err != nil {
+			t.Fatalf("Load: %v", err)
+		}
+		if cfg.Images != mode {
+			t.Errorf("images = %q, want %q", cfg.Images, mode)
+		}
 	}
 }
 

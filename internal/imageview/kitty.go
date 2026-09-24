@@ -1,11 +1,8 @@
 package imageview
 
 import (
-	"bytes"
 	"encoding/base64"
 	"fmt"
-	"io"
-	"regexp"
 	"strings"
 )
 
@@ -114,41 +111,6 @@ func (k Kitty) command(control, payload string) string {
 	// tmux hands a passthrough to the outer terminal as is. Every escape
 	// inside is doubled, or tmux would take the first one as the end.
 	return "\x1bPtmux;" + strings.ReplaceAll(seq, "\x1b", "\x1b\x1b") + "\x1b\\"
-}
-
-// queryID is the ID the support query asks about. No image is ever stored
-// under it: a query only checks that one could be.
-const queryID = 31
-
-// KittyQuery asks whether the terminal speaks the graphics protocol, then
-// asks for its primary device attributes. Every terminal answers the second,
-// so its answer marks the end of what there is to read: a terminal with
-// graphics answers the query first, and one without says nothing to it.
-//
-// It is not for use inside tmux, which answers the device attributes itself
-// before the terminal's answer to the query could arrive.
-func KittyQuery() string {
-	return fmt.Sprintf("\x1b_Gi=%d,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b[c", queryID)
-}
-
-var (
-	deviceAttributes = regexp.MustCompile(`\x1b\[\?[0-9;]*c$`)
-	kittyOK          = fmt.Appendf(nil, "\x1b_Gi=%d;OK\x1b\\", queryID)
-)
-
-// AnswersKitty reads the replies to KittyQuery, up to and including the
-// device attributes, and reports whether the graphics query was answered OK.
-// It reads a byte at a time so that nothing typed after the replies is taken.
-func AnswersKitty(r io.Reader) (bool, error) {
-	var got []byte
-	b := make([]byte, 1)
-	for !deviceAttributes.Match(got) {
-		if _, err := io.ReadFull(r, b); err != nil {
-			return bytes.Contains(got, kittyOK), err
-		}
-		got = append(got, b[0])
-	}
-	return bytes.Contains(got, kittyOK), nil
 }
 
 // FitCells is the box of cells an image of width x height pixels fills inside

@@ -72,10 +72,11 @@ type Config struct {
 	// Images picks how p previews an image. "halfblocks" draws it in
 	// truecolor half-block cells, which works in any terminal; "kitty" sends
 	// it at full resolution over the kitty graphics protocol (kitty, ghostty),
-	// through tmux too when its allow-passthrough is on; "auto" picks kitty
-	// when the terminal answers for it and half-blocks otherwise; "off" turns
-	// p off. Attachments open in the system viewer with Enter whatever this
-	// says.
+	// through tmux too when its allow-passthrough is on; "sixel" sends it at
+	// full resolution as sixel (foot, and tmux built with sixel); "auto"
+	// picks kitty when the terminal answers for it, else sixel when it
+	// reports that, else half-blocks; "off" turns p off. Attachments open in
+	// the system viewer with Enter whatever this says.
 	Images string `toml:"images"`
 
 	// Reload says what R reloads. "focused" reloads only the focused pane --
@@ -151,6 +152,7 @@ const (
 	ImagesAuto       = "auto"
 	ImagesHalfblocks = "halfblocks"
 	ImagesKitty      = "kitty"
+	ImagesSixel      = "sixel"
 	ImagesOff        = "off"
 )
 
@@ -295,9 +297,9 @@ func (c *Config) validate() error {
 		return &Error{Key: "timeouts.request", Msg: "must be greater than zero"}
 	}
 	switch c.Images {
-	case ImagesAuto, ImagesHalfblocks, ImagesKitty, ImagesOff:
+	case ImagesAuto, ImagesHalfblocks, ImagesKitty, ImagesSixel, ImagesOff:
 	default:
-		return &Error{Key: "images", Msg: fmt.Sprintf("%q is not one of \"auto\", \"halfblocks\", \"kitty\", \"off\"", c.Images)}
+		return &Error{Key: "images", Msg: fmt.Sprintf("%q is not one of \"auto\", \"halfblocks\", \"kitty\", \"sixel\", \"off\"", c.Images)}
 	}
 	switch c.Reload {
 	case ReloadFocused, ReloadBoth:

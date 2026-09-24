@@ -435,8 +435,7 @@ A fullscreen preview sits beside that, not in place of it: `p` on an image draws
 in a modal overlay with truecolor Unicode half-blocks, which are ordinary cell content
 and so survive anything tmux does. The overlay has a fixed size, so it is simply redrawn
 on resize, where an inline image would have to survive scrolling. The `images` setting
-picks the renderer (`auto`, `halfblocks`, `kitty`, `off`); sixel is to drop in behind
-the same setting.
+picks the renderer (`auto`, `halfblocks`, `kitty`, `sixel`, `off`).
 
 In kitty and ghostty the overlay draws the image at full resolution with the kitty
 graphics protocol and Unicode placeholders: the image is sent once (through tmux's
@@ -446,6 +445,16 @@ reattaches. `auto` picks it when the terminal answers a graphics query (inside t
 tmux reports the client as kitty or ghostty); without tmux's `allow-passthrough` it falls
 back to half-blocks and says so, while an explicit `kitty` reports the error. Closing the
 overlay deletes the image from the terminal.
+
+In foot, and other terminals that draw sixel, the overlay draws the image at full
+resolution as sixel, quantised to the palette size the terminal reports. Inside tmux it
+relies on tmux's own sixel support (3.4+, built with it), which keeps the image in its
+grid and redraws it; no passthrough is involved. The sixel is part of the frame: the
+cells it covers are blank, and it is drawn after them from a saved cursor, so bubbletea
+writes it again only when the overlay changes size, when it is encoded again at the new
+size. Closing the overlay clears the screen, so none of it is left on the pane
+underneath. `auto` picks sixel when the terminal (or tmux) reports it and kitty graphics
+are unavailable; an explicit `sixel` without support reports why.
 
 Inline images embedded through Atlassian's Media Services API (as opposed to ordinary
 attachments) require a separate token exchange and will report a clear, specific
