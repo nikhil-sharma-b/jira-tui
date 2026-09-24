@@ -3,10 +3,12 @@
 // scale again cheaply; rendering then fits that copy to whatever size the
 // screen is now, which is what lets a resize simply redraw.
 //
-// The one renderer so far draws Unicode half-blocks: each cell is two square
+// There are two renderers. Half-blocks work everywhere: each cell is two square
 // pixels, the upper one in the foreground colour of ▀ and the lower one in the
 // background. It is ordinary cell content, so it works in any terminal and
-// survives anything tmux does to the screen.
+// survives anything tmux does to the screen. Kitty sends the pixels to a
+// terminal that speaks the kitty graphics protocol, which draws them at its
+// own resolution.
 package imageview
 
 import (
@@ -23,7 +25,7 @@ import (
 	// first frame, which is what a still preview can show.
 	_ "image/gif"
 	_ "image/jpeg"
-	_ "image/png"
+	"image/png"
 
 	"github.com/muesli/termenv"
 )
@@ -50,11 +52,26 @@ var (
 type Image struct {
 	Width, Height int
 	pixels        *image.RGBA
+	// PNG is the image encoded for a terminal that draws pixels itself, set
+	// only by DecodeForGraphics.
+	PNG []byte
 }
 
 // Decode reads a PNG, JPEG or GIF. The header is read first, so an image too
 // large to hold is refused before any of its pixels are.
 func Decode(r io.Reader) (*Image, error) {
+	return decode(r, 0)
+}
+
+// DecodeForGraphics is Decode that also keeps the image as a PNG of at most
+// maxSide on its longer side, for a terminal that is sent the pixels and
+// draws them at its own resolution. Every format is encoded afresh, so the
+// terminal is sent one format, and never more pixels than it can show.
+func DecodeForGraphics(r io.Reader, maxSide int) (*Image, error) {
+	return decode(r, maxSide)
+}
+
+func decode(r io.Reader, pngSide int) (*Image, error) {
 	var header bytes.Buffer
 	cfg, _, err := image.DecodeConfig(io.TeeReader(r, &header))
 	if err != nil {
@@ -74,11 +91,36 @@ func Decode(r io.Reader) (*Image, error) {
 		return nil, err
 	}
 	width, height := src.Bounds().Dx(), src.Bounds().Dy()
-	keptWidth, keptHeight := width, height
-	if longest := max(width, height); longest > MaxSide {
-		keptWidth, keptHeight = max(width*MaxSide/longest, 1), max(height*MaxSide/longest, 1)
+	keptWidth, keptHeight := bound(width, height, MaxSide)
+	img := &Image{Width: width, Height: height, pixels: scale(src, keptWidth, keptHeight)}
+	if pngSide > 0 {
+		if img.PNG, err = encodeScaled(src, pngSide); err != nil {
+			return nil, err
+		}
 	}
-	return &Image{Width: width, Height: height, pixels: scale(src, keptWidth, keptHeight)}, nil
+	return img, nil
+}
+
+// bound is width x height shrunk, aspect ratio kept, until neither side is
+// over maxSide; a smaller size is kept as it is.
+func bound(width, height, maxSide int) (int, int) {
+	if longest := max(width, height); longest > maxSide {
+		return max(width*maxSide/longest, 1), max(height*maxSide/longest, 1)
+	}
+	return width, height
+}
+
+// encodeScaled is src as a PNG of at most maxSide on its longer side. The
+// fastest compression is plenty: the PNG only crosses to the terminal once,
+// and a slow encode is a wait before anything shows.
+func encodeScaled(src image.Image, maxSide int) ([]byte, error) {
+	width, height := bound(src.Bounds().Dx(), src.Bounds().Dy(), maxSide)
+	var b bytes.Buffer
+	enc := png.Encoder{CompressionLevel: png.BestSpeed}
+	if err := enc.Encode(&b, scale(src, width, height)); err != nil {
+		return nil, err
+	}
+	return b.Bytes(), nil
 }
 
 // Fit is the pixel grid an image of width x height is drawn at inside cols x

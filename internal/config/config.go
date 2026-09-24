@@ -70,10 +70,12 @@ type Config struct {
 	Editor string `toml:"editor"`
 
 	// Images picks how p previews an image. "halfblocks" draws it in
-	// truecolor half-block cells, which works in any terminal; "auto" picks
-	// the best renderer the terminal supports, which today is always
-	// half-blocks; "off" turns p off. Attachments open in the system viewer
-	// with Enter whatever this says.
+	// truecolor half-block cells, which works in any terminal; "kitty" sends
+	// it at full resolution over the kitty graphics protocol (kitty, ghostty),
+	// through tmux too when its allow-passthrough is on; "auto" picks kitty
+	// when the terminal answers for it and half-blocks otherwise; "off" turns
+	// p off. Attachments open in the system viewer with Enter whatever this
+	// says.
 	Images string `toml:"images"`
 
 	// Reload says what R reloads. "focused" reloads only the focused pane --
@@ -148,6 +150,7 @@ const (
 const (
 	ImagesAuto       = "auto"
 	ImagesHalfblocks = "halfblocks"
+	ImagesKitty      = "kitty"
 	ImagesOff        = "off"
 )
 
@@ -292,9 +295,9 @@ func (c *Config) validate() error {
 		return &Error{Key: "timeouts.request", Msg: "must be greater than zero"}
 	}
 	switch c.Images {
-	case ImagesAuto, ImagesHalfblocks, ImagesOff:
+	case ImagesAuto, ImagesHalfblocks, ImagesKitty, ImagesOff:
 	default:
-		return &Error{Key: "images", Msg: fmt.Sprintf("%q is not one of \"auto\", \"halfblocks\", \"off\"", c.Images)}
+		return &Error{Key: "images", Msg: fmt.Sprintf("%q is not one of \"auto\", \"halfblocks\", \"kitty\", \"off\"", c.Images)}
 	}
 	switch c.Reload {
 	case ReloadFocused, ReloadBoth:

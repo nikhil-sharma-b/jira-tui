@@ -13,3 +13,6 @@ func SetMaxPixels(n int) (restore func()) {
 
 // Stored is the size of the copy an Image keeps for rendering.
 func Stored(img *Image) image.Rectangle { return img.pixels.Bounds() }
+
+// Diacritics are the marks placeholders name rows and columns with.
+func Diacritics() []rune { return diacritics[:] }

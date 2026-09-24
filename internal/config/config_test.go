@@ -164,7 +164,7 @@ func TestLoadErrorsNameTheOffendingKey(t *testing.T) {
 		},
 		{
 			name:     "unknown image mode",
-			contents: topLevel("images = \"kitty\"\n"),
+			contents: topLevel("images = \"iterm\"\n"),
 			wantKey:  "images",
 		},
 		{
@@ -194,6 +194,16 @@ func TestLoadErrorsNameTheOffendingKey(t *testing.T) {
 				t.Errorf("Key = %q, want %q (message: %v)", cerr.Key, tt.wantKey, err)
 			}
 		})
+	}
+}
+
+func TestImagesAcceptsKitty(t *testing.T) {
+	cfg, err := config.Load(write(t, topLevel("images = \"kitty\"\n"), 0o600))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Images != config.ImagesKitty {
+		t.Errorf("images = %q, want %q", cfg.Images, config.ImagesKitty)
 	}
 }
 

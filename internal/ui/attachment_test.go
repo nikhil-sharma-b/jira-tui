@@ -45,9 +45,11 @@ func newAttachmentHarness(t *testing.T, client *fakeClient) *attachmentHarness {
 	return newAttachmentHarnessWith(t, client, testConfig(t, nil))
 }
 
-func newAttachmentHarnessWith(t *testing.T, client *fakeClient, cfg *config.Config) *attachmentHarness {
+// newAttachmentHarnessWith is newAttachmentHarness on cfg, with any further
+// options set by the functions given.
+func newAttachmentHarnessWith(t *testing.T, client *fakeClient, cfg *config.Config, with ...func(*ui.Options)) *attachmentHarness {
 	h := &attachmentHarness{client: client, dir: t.TempDir()}
-	h.driver = newPausedDriver(t, ui.Options{
+	opts := ui.Options{
 		Client:      client,
 		Config:      cfg,
 		DownloadDir: h.dir,
@@ -59,7 +61,11 @@ func newAttachmentHarnessWith(t *testing.T, client *fakeClient, cfg *config.Conf
 			h.urls = append(h.urls, url)
 			return nil
 		},
-	})
+	}
+	for _, f := range with {
+		f(&opts)
+	}
+	h.driver = newPausedDriver(t, opts)
 	h.flush()
 	return h
 }

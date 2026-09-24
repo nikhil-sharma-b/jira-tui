@@ -6,7 +6,8 @@ Built for one workflow: a tmux session per story, several of them open at once.
 
 - **Single static Go binary.** Fast start, small footprint, many sessions.
 - **Direct pane addressing.** `gl` / `gd` jump to the list and the detail pane,
-  `ga` to the attachments, where `p` previews an image fullscreen in any terminal,
+  `ga` to the attachments, where `p` previews an image fullscreen in any terminal
+  (at full resolution in kitty and ghostty, tmux included),
   while `[` / `]` cycle the detail tabs. `Esc` always returns to normal mode; no widget
   swallows it.
 - **Speaks REST directly**, not a CLI subprocess per action, so one keep-alive

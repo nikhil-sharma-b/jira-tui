@@ -157,6 +157,10 @@ func (m *Model) startDownload(a jira.Attachment, then afterDownload) tea.Cmd {
 	dl := &download{request: m.downloadRequest, name: a.Filename, total: a.Size, cancel: cancel}
 	m.download, m.status, m.notice = dl, nil, ""
 	client, dir, openFile := m.client, m.downloadDir, m.openFile
+	pngSide := 0
+	if m.renderer.kind == drawKitty {
+		pngSide = graphicsSide
+	}
 	fetch := func() tea.Msg {
 		defer cancel()
 		msg := downloadMsg{request: dl.request, name: a.Filename, preview: preview}
@@ -172,7 +176,7 @@ func (m *Model) startDownload(a jira.Attachment, then afterDownload) tea.Cmd {
 		case preview:
 			// The overlay holds the decoded pixels, so the file has done its
 			// job the moment they are read.
-			msg.image, msg.err = decodeImage(msg.path)
+			msg.image, msg.err = decodeImage(msg.path, pngSide)
 			os.RemoveAll(filepath.Dir(msg.path))
 			msg.path = ""
 		default:
@@ -262,7 +266,7 @@ func (m *Model) handleDownload(msg downloadMsg) tea.Cmd {
 		m.closePicker()
 		m.closePrompt()
 		m.status = nil
-		m.preview = &imagePreview{name: msg.name, image: msg.image}
+		m.openPreview(msg.name, msg.image)
 	case msg.err != nil:
 		m.status = fmt.Errorf("download %s: %w", msg.name, msg.err)
 	case msg.openErr != nil:

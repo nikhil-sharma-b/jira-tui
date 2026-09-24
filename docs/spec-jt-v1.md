@@ -435,8 +435,17 @@ A fullscreen preview sits beside that, not in place of it: `p` on an image draws
 in a modal overlay with truecolor Unicode half-blocks, which are ordinary cell content
 and so survive anything tmux does. The overlay has a fixed size, so it is simply redrawn
 on resize, where an inline image would have to survive scrolling. The `images` setting
-picks the renderer (`auto`, `halfblocks`, `off`); kitty graphics and sixel are to drop
-in behind the same setting.
+picks the renderer (`auto`, `halfblocks`, `kitty`, `off`); sixel is to drop in behind
+the same setting.
+
+In kitty and ghostty the overlay draws the image at full resolution with the kitty
+graphics protocol and Unicode placeholders: the image is sent once (through tmux's
+passthrough inside tmux), and the cells it covers are written as placeholder characters,
+which tmux keeps as ordinary cell content through redraws, window switches and
+reattaches. `auto` picks it when the terminal answers a graphics query (inside tmux, when
+tmux reports the client as kitty or ghostty); without tmux's `allow-passthrough` it falls
+back to half-blocks and says so, while an explicit `kitty` reports the error. Closing the
+overlay deletes the image from the terminal.
 
 Inline images embedded through Atlassian's Media Services API (as opposed to ordinary
 attachments) require a separate token exchange and will report a clear, specific

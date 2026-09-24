@@ -82,6 +82,17 @@ type Options struct {
 	// sets it short so that what is being asserted is the ordering rather than
 	// the wait.
 	SearchDebounce time.Duration
+	// Terminal is what the terminal can draw images with, which Run finds
+	// out before the UI starts. The zero value is a terminal that draws
+	// half-blocks only.
+	Terminal Terminal
+	// WriteGraphics sends a graphics command to the terminal outside the
+	// frame. It defaults to discarding it, which only a terminal that
+	// Terminal says has graphics would notice.
+	WriteGraphics func(seq string)
+	// CellSize is a cell's size in pixels, zero when unknown. It defaults to
+	// asking the terminal.
+	CellSize func() (width, height int)
 }
 
 // Model is the root bubbletea model. It owns the query, the loaded result set
@@ -224,6 +235,13 @@ type Model struct {
 	// colorProfile is what the terminal can show, which the preview draws
 	// its colours down to.
 	colorProfile termenv.Profile
+	// renderer is how the preview draws, terminal what it was chosen for,
+	// and writeGraphics and cellSize how a kitty preview reaches and
+	// measures the terminal.
+	renderer      renderer
+	terminal      Terminal
+	writeGraphics func(string)
+	cellSize      func() (int, int)
 }
 
 // New builds the root model. When Pin is set, detail opens full-width with the
@@ -264,6 +282,14 @@ func New(opts Options) (*Model, error) {
 	if downloadDir == "" {
 		downloadDir = defaultDownloadDir()
 	}
+	writeGraphics := opts.WriteGraphics
+	if writeGraphics == nil {
+		writeGraphics = func(string) {}
+	}
+	measureCell := opts.CellSize
+	if measureCell == nil {
+		measureCell = cellSize
+	}
 	debounce := opts.SearchDebounce
 	if debounce <= 0 {
 		debounce = defaultSearchDebounce
@@ -289,6 +315,10 @@ func New(opts Options) (*Model, error) {
 		openFile:      openFile,
 		downloadDir:   downloadDir,
 		colorProfile:  lipgloss.ColorProfile(),
+		renderer:      chooseRenderer(cfg.Images, opts.Terminal),
+		terminal:      opts.Terminal,
+		writeGraphics: writeGraphics,
+		cellSize:      measureCell,
 
 		searchDebounce: debounce,
 	}
@@ -381,6 +411,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.list.rows = m.rows()
 		m.list.clamp()
 		m.resizePanes()
+		m.placePreview()
 		return m, nil
 
 	case tea.KeyMsg:
@@ -1202,12 +1233,28 @@ var _ tea.Model = (*Model)(nil)
 // bubbletea, which is what restores the terminal on a clean quit, on a failed
 // query, and on a panic alike -- there is no ANSI cleanup of our own to get
 // wrong.
+//
+// The terminal is asked what it can draw images with first, while its answer
+// can still be read as an answer rather than as keys.
 func Run(opts Options) error {
+	if opts.Config != nil {
+		opts.Terminal = probeTerminal(opts.Config.Images)
+	}
+	out := &output{File: os.Stdout}
+	graphics := newGraphicsQueue(out)
+	opts.WriteGraphics = graphics.send
 	m, err := New(opts)
 	if err != nil {
+		graphics.close()
 		return err
 	}
-	if _, err := tea.NewProgram(m, tea.WithAltScreen()).Run(); err != nil {
+	_, err = tea.NewProgram(m, tea.WithAltScreen(), tea.WithOutput(out)).Run()
+	// However the session ended -- ctrl+c included, which quits from under
+	// the overlay -- an image still in the terminal goes, and is gone before
+	// jt exits.
+	m.closePreview()
+	graphics.close()
+	if err != nil {
 		return err
 	}
 	return m.Err()
