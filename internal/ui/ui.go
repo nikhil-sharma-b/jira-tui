@@ -77,6 +77,10 @@ type Options struct {
 	// EditorExec defaults to tea.ExecProcess, which releases and restores the
 	// terminal around the configured editor.
 	EditorExec EditorExec
+	// ShellExec runs a :! command the way EditorExec runs the editor. The
+	// default also copies what the command writes to the terminal, so it is
+	// seen as it runs as well as collected for the pager.
+	ShellExec EditorExec
 	// SearchDebounce is how long a keystroke in a picker that searches the
 	// server waits for the next one. Zero takes defaultSearchDebounce; a test
 	// sets it short so that what is being asserted is the ordering rather than
@@ -211,6 +215,7 @@ type Model struct {
 
 	editorCommand []string
 	editorExec    EditorExec
+	shellExec     EditorExec
 	editorRequest uint64
 	// editorOpening records that an editor has been asked for and has not yet
 	// taken the terminal. It is the window Esc can still cancel in, and it is
@@ -232,6 +237,8 @@ type Model struct {
 
 	// preview is the fullscreen image overlay, nil when it is closed.
 	preview *imagePreview
+	// pager is a finished shell command's output, nil when none is up.
+	pager *pager
 	// colorProfile is what the terminal can show, which the preview draws
 	// its colours down to.
 	colorProfile termenv.Profile
@@ -265,6 +272,10 @@ func New(opts Options) (*Model, error) {
 	editorExec := opts.EditorExec
 	if editorExec == nil {
 		editorExec = tea.ExecProcess
+	}
+	shellExec := opts.ShellExec
+	if shellExec == nil {
+		shellExec = shellExecDefault
 	}
 	copyText := opts.Copy
 	if copyText == nil {
@@ -309,6 +320,7 @@ func New(opts Options) (*Model, error) {
 		now:           time.Now,
 		editorCommand: editorCommand,
 		editorExec:    editorExec,
+		shellExec:     shellExec,
 		drafts:        make(map[draftKey]string),
 		copyText:      copyText,
 		openURL:       openURL,
@@ -496,6 +508,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case assignDoneMsg:
 		return m, m.handleAssignDone(msg)
 
+	case shellDoneMsg:
+		return m, m.handleShellDone(msg)
+
 	case integrationMsg:
 		return m, m.handleIntegration(msg)
 
@@ -605,6 +620,9 @@ func (m *Model) closePrompt() {
 func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
 	if m.preview != nil {
 		return m.handlePreviewAction(action)
+	}
+	if m.pager != nil {
+		return m.handlePagerAction(action, count)
 	}
 	if action == config.ActionNormalMode {
 		// Esc is resolved ahead of every widget, the overlay included: dismissing
@@ -968,6 +986,9 @@ func (m *Model) rows() int { return max(m.height-2-frameWidth, 0) }
 func (m *Model) View() string {
 	if m.preview != nil {
 		return m.previewView()
+	}
+	if m.pager != nil {
+		return m.pagerView()
 	}
 	if m.help.Visible() {
 		return m.help.String()

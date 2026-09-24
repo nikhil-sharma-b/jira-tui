@@ -34,8 +34,7 @@ type command struct {
 	liveArgs func(m *Model) tea.Cmd
 }
 
-// commands is the whole vocabulary. Ticket 07 names these four; the rest of
-// the spec's commandline arrives with the tickets that implement them.
+// commands is the whole vocabulary.
 var commands = []command{
 	{name: "q", run: func(m *Model, _ string) tea.Cmd { return m.closePane() }},
 	{name: "qa", run: func(m *Model, _ string) tea.Cmd { return tea.Quit }},
@@ -44,6 +43,8 @@ var commands = []command{
 	{name: "jql", run: runJQL, completeArg: completeSavedQueries},
 	{name: "transition", run: runTransition, completeArg: completeTransitions, liveArgs: liveTransitions},
 	{name: "assign", run: runAssign},
+	{name: "!", run: runShell},
+	{name: "acli", run: runAcli},
 	{name: "cache", run: runCache, completeArg: func(_ *Model, partial string) []string {
 		if !strings.HasPrefix("clear", partial) {
 			return nil
@@ -80,7 +81,12 @@ func (m *Model) runCommand(line string) tea.Cmd {
 // splitCommand separates the command name from its argument. The argument
 // keeps its interior spacing, because a JQL is mostly spaces.
 func splitCommand(line string) (name, arg string) {
-	name, arg, _ = strings.Cut(strings.TrimSpace(line), " ")
+	line = strings.TrimSpace(line)
+	// :! takes its command with or without a space, as vim's does.
+	if rest, ok := strings.CutPrefix(line, "!"); ok {
+		return "!", strings.TrimSpace(rest)
+	}
+	name, arg, _ = strings.Cut(line, " ")
 	return name, strings.TrimSpace(arg)
 }
 
