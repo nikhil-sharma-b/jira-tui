@@ -13,6 +13,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/nikhil-sharma-b/jira-tui/internal/adf"
+	"github.com/nikhil-sharma-b/jira-tui/internal/imageview"
 	"github.com/nikhil-sharma-b/jira-tui/internal/jira"
 )
 
@@ -93,12 +94,16 @@ type download struct {
 	cancel  context.CancelFunc
 }
 
+// downloadMsg is how a download ended. A preview's file is decoded into
+// image and removed, where any other is handed to the system opener.
 type downloadMsg struct {
 	request uint64
 	name    string
 	path    string
 	err     error
 	openErr error
+	preview bool
+	image   *imageview.Image
 }
 
 type downloadTickMsg struct{ request uint64 }
@@ -118,14 +123,35 @@ func (m *Model) openSelected() tea.Cmd {
 		return func() tea.Msg {
 			return integrationMsg{verb: "open", key: item.name, success: "opened " + item.name, generation: generation, err: openURL(target)}
 		}
-	case m.download != nil:
-		m.status = fmt.Errorf("%s is still downloading; Esc cancels it", m.download.name)
+	case m.downloading():
 		return nil
 	}
-	return m.startDownload(*item.attachment)
+	return m.startDownload(*item.attachment, thenOpen)
 }
 
-func (m *Model) startDownload(a jira.Attachment) tea.Cmd {
+// downloading reports, on the status line, that a download is already
+// running: there is one at a time, so that Esc has one thing to cancel.
+func (m *Model) downloading() bool {
+	if m.download == nil {
+		return false
+	}
+	m.status = fmt.Errorf("%s is still downloading; Esc cancels it", m.download.name)
+	return true
+}
+
+// afterDownload is what becomes of a downloaded attachment.
+type afterDownload int
+
+const (
+	// thenOpen hands the file to the system opener.
+	thenOpen afterDownload = iota
+	// thenPreview decodes it for the preview overlay and removes it.
+	thenPreview
+)
+
+// startDownload fetches an attachment, then does with it what then says.
+func (m *Model) startDownload(a jira.Attachment, then afterDownload) tea.Cmd {
+	preview := then == thenPreview
 	m.downloadRequest++
 	ctx, cancel := context.WithCancel(context.Background())
 	dl := &download{request: m.downloadRequest, name: a.Filename, total: a.Size, cancel: cancel}
@@ -133,7 +159,7 @@ func (m *Model) startDownload(a jira.Attachment) tea.Cmd {
 	client, dir, openFile := m.client, m.downloadDir, m.openFile
 	fetch := func() tea.Msg {
 		defer cancel()
-		msg := downloadMsg{request: dl.request, name: a.Filename}
+		msg := downloadMsg{request: dl.request, name: a.Filename, preview: preview}
 		msg.path, msg.err = fetchAttachment(ctx, client, dir, a, &dl.written)
 		if msg.err == nil && ctx.Err() != nil {
 			// Esc landed after the last byte: the user has said no to the
@@ -141,7 +167,15 @@ func (m *Model) startDownload(a jira.Attachment) tea.Cmd {
 			os.RemoveAll(filepath.Dir(msg.path))
 			msg.path, msg.err = "", ctx.Err()
 		}
-		if msg.err == nil {
+		switch {
+		case msg.err != nil:
+		case preview:
+			// The overlay holds the decoded pixels, so the file has done its
+			// job the moment they are read.
+			msg.image, msg.err = decodeImage(msg.path)
+			os.RemoveAll(filepath.Dir(msg.path))
+			msg.path = ""
+		default:
 			msg.openErr = openFile(msg.path)
 		}
 		return msg
@@ -219,6 +253,16 @@ func (m *Model) handleDownload(msg downloadMsg) tea.Cmd {
 	}
 	m.download = nil
 	switch {
+	case msg.err != nil && msg.preview:
+		m.status = fmt.Errorf("preview %s: %w", msg.name, msg.err)
+	case msg.preview:
+		// Whatever was opened while the image downloaded would sit under the
+		// overlay taking keys blind, so it goes, as help does.
+		m.help.Hide()
+		m.closePicker()
+		m.closePrompt()
+		m.status = nil
+		m.preview = &imagePreview{name: msg.name, image: msg.image}
 	case msg.err != nil:
 		m.status = fmt.Errorf("download %s: %w", msg.name, msg.err)
 	case msg.openErr != nil:

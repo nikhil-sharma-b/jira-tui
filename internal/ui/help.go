@@ -91,6 +91,7 @@ var helpCategories = []category{
 	}},
 	{"ACTIONS", []entry{
 		{config.ActionOpen, "open"},
+		{config.ActionPreview, "preview image"},
 		{config.ActionJumpBack, "jump back"},
 		{config.ActionJumpFwd, "jump forward"},
 		{config.ActionComment, "comment via $EDITOR"},

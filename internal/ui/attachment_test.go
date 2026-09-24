@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/nikhil-sharma-b/jira-tui/internal/config"
 	"github.com/nikhil-sharma-b/jira-tui/internal/jira"
 	"github.com/nikhil-sharma-b/jira-tui/internal/ui"
 )
@@ -41,10 +42,14 @@ type attachmentHarness struct {
 }
 
 func newAttachmentHarness(t *testing.T, client *fakeClient) *attachmentHarness {
+	return newAttachmentHarnessWith(t, client, testConfig(t, nil))
+}
+
+func newAttachmentHarnessWith(t *testing.T, client *fakeClient, cfg *config.Config) *attachmentHarness {
 	h := &attachmentHarness{client: client, dir: t.TempDir()}
 	h.driver = newPausedDriver(t, ui.Options{
 		Client:      client,
-		Config:      testConfig(t, nil),
+		Config:      cfg,
 		DownloadDir: h.dir,
 		OpenFile: func(path string) error {
 			h.opened = append(h.opened, path)
@@ -144,44 +149,7 @@ func TestADownloadShowsProgressAndEscCancelsIt(t *testing.T) {
 	h.keys("g", "a")
 	h.send(keyMsg("enter"))
 
-	// The download blocks until cancelled, so it runs off the test's
-	// goroutine while the screen is inspected and Esc is pressed.
-	results := make(chan tea.Msg, 16)
-	var run func(tea.Cmd)
-	running := 0
-	run = func(cmd tea.Cmd) {
-		running++
-		go func() {
-			if msg, ok := cmd().(tea.BatchMsg); ok {
-				for _, c := range msg {
-					if c != nil {
-						results <- runNested{c}
-					}
-				}
-			} else {
-				results <- msg
-			}
-			results <- nil
-		}()
-	}
-	for _, cmd := range h.pending {
-		run(cmd)
-	}
-	h.pending = nil
-	collect := func() []tea.Msg {
-		var got []tea.Msg
-		for running > 0 {
-			switch msg := (<-results).(type) {
-			case nil:
-				running--
-			case runNested:
-				run(msg.cmd)
-			default:
-				got = append(got, msg)
-			}
-		}
-		return got
-	}
+	collect := h.runQueued()
 	deadline := time.Now().Add(2 * time.Second)
 	for !strings.Contains(h.statusLine(), "downloading trace.log") {
 		if time.Now().After(deadline) {
@@ -211,6 +179,49 @@ func TestADownloadShowsProgressAndEscCancelsIt(t *testing.T) {
 }
 
 type runNested struct{ cmd tea.Cmd }
+
+// runQueued starts every queued command on a goroutine of its own, so that a
+// download blocked until it is cancelled runs while the test inspects the
+// screen and presses keys. collect waits for them all, returning what they
+// produced for the test to deliver.
+func (h *attachmentHarness) runQueued() (collect func() []tea.Msg) {
+	results := make(chan tea.Msg, 16)
+	running := 0
+	var run func(tea.Cmd)
+	run = func(cmd tea.Cmd) {
+		running++
+		go func() {
+			if msg, ok := cmd().(tea.BatchMsg); ok {
+				for _, c := range msg {
+					if c != nil {
+						results <- runNested{c}
+					}
+				}
+			} else {
+				results <- msg
+			}
+			results <- nil
+		}()
+	}
+	for _, cmd := range h.pending {
+		run(cmd)
+	}
+	h.pending = nil
+	return func() []tea.Msg {
+		var got []tea.Msg
+		for running > 0 {
+			switch msg := (<-results).(type) {
+			case nil:
+				running--
+			case runNested:
+				run(msg.cmd)
+			default:
+				got = append(got, msg)
+			}
+		}
+		return got
+	}
+}
 
 func TestDescriptionImagesOpenTheSameWayOrSayWhyTheyCannot(t *testing.T) {
 	client := &fakeClient{

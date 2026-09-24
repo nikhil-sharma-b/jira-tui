@@ -54,7 +54,7 @@ func TestLoadMinimalConfigGetsDefaults(t *testing.T) {
 	if got, want := cfg.Leader, " "; got != want {
 		t.Errorf("leader = %q, want %q", got, want)
 	}
-	if got, want := cfg.Images, "off"; got != want {
+	if got, want := cfg.Images, "auto"; got != want {
 		t.Errorf("images = %q, want %q", got, want)
 	}
 	if got, want := cfg.Reload, "focused"; got != want {
@@ -71,7 +71,7 @@ func TestLoadMinimalConfigGetsDefaults(t *testing.T) {
 func TestLoadOverridesDefaults(t *testing.T) {
 	cfg, err := config.Load(write(t, topLevel(`
 leader = ","
-images = "sixel"
+images = "halfblocks"
 reload = "both"
 columns = ["key", "summary"]
 default_query = "project = PROJ"
@@ -95,6 +95,9 @@ help = ""
 	}
 	if got, want := cfg.Leader, ","; got != want {
 		t.Errorf("leader = %q, want %q", got, want)
+	}
+	if got, want := cfg.Images, "halfblocks"; got != want {
+		t.Errorf("images = %q, want %q", got, want)
 	}
 	if got, want := strings.Join(cfg.Columns, ","), "key,summary"; got != want {
 		t.Errorf("columns = %q, want %q", got, want)
@@ -162,6 +165,13 @@ func TestLoadErrorsNameTheOffendingKey(t *testing.T) {
 		{
 			name:     "unknown image mode",
 			contents: topLevel("images = \"kitty\"\n"),
+			wantKey:  "images",
+		},
+		{
+			// Reserved for the renderer a later version adds, and refused
+			// until it exists rather than silently meaning something else.
+			name:     "image mode not built yet",
+			contents: topLevel("images = \"sixel\"\n"),
 			wantKey:  "images",
 		},
 		{

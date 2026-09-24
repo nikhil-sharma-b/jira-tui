@@ -69,8 +69,11 @@ type Config struct {
 	// Editor overrides $EDITOR for comment and description authoring.
 	Editor string `toml:"editor"`
 
-	// Images selects image handling. "off" lists attachments as openable
-	// placeholders; "sixel" is reserved for a later version.
+	// Images picks how p previews an image. "halfblocks" draws it in
+	// truecolor half-block cells, which works in any terminal; "auto" picks
+	// the best renderer the terminal supports, which today is always
+	// half-blocks; "off" turns p off. Attachments open in the system viewer
+	// with Enter whatever this says.
 	Images string `toml:"images"`
 
 	// Reload says what R reloads. "focused" reloads only the focused pane --
@@ -141,6 +144,13 @@ const (
 	ReloadBoth    = "both"
 )
 
+// The values of images.
+const (
+	ImagesAuto       = "auto"
+	ImagesHalfblocks = "halfblocks"
+	ImagesOff        = "off"
+)
+
 // DefaultQuery is what jt shows when nothing is pinned.
 const DefaultQuery = "assignee = currentUser() AND resolution = Unresolved ORDER BY updated DESC"
 
@@ -153,7 +163,7 @@ func Defaults() *Config {
 		Columns:      []string{"key", "status", "issuetype", "summary", "assignee", "priority", "updated"},
 		Keys:         map[string]string{},
 		Leader:       " ",
-		Images:       "off",
+		Images:       ImagesAuto,
 		Reload:       ReloadFocused,
 		Timeouts:     Timeouts{Request: Duration(DefaultRequestTimeout)},
 	}
@@ -282,9 +292,9 @@ func (c *Config) validate() error {
 		return &Error{Key: "timeouts.request", Msg: "must be greater than zero"}
 	}
 	switch c.Images {
-	case "off", "sixel":
+	case ImagesAuto, ImagesHalfblocks, ImagesOff:
 	default:
-		return &Error{Key: "images", Msg: fmt.Sprintf("%q is not one of \"off\", \"sixel\"", c.Images)}
+		return &Error{Key: "images", Msg: fmt.Sprintf("%q is not one of \"auto\", \"halfblocks\", \"off\"", c.Images)}
 	}
 	switch c.Reload {
 	case ReloadFocused, ReloadBoth:

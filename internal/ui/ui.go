@@ -18,7 +18,9 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
 	"github.com/nikhil-sharma-b/jira-tui/internal/cache"
 	"github.com/nikhil-sharma-b/jira-tui/internal/config"
 	"github.com/nikhil-sharma-b/jira-tui/internal/jira"
@@ -216,6 +218,12 @@ type Model struct {
 	downloadDir     string
 	download        *download
 	downloadRequest uint64
+
+	// preview is the fullscreen image overlay, nil when it is closed.
+	preview *imagePreview
+	// colorProfile is what the terminal can show, which the preview draws
+	// its colours down to.
+	colorProfile termenv.Profile
 }
 
 // New builds the root model. When Pin is set, detail opens full-width with the
@@ -280,6 +288,7 @@ func New(opts Options) (*Model, error) {
 		openURL:       openURL,
 		openFile:      openFile,
 		downloadDir:   downloadDir,
+		colorProfile:  lipgloss.ColorProfile(),
 
 		searchDebounce: debounce,
 	}
@@ -561,6 +570,9 @@ func (m *Model) closePrompt() {
 }
 
 func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
+	if m.preview != nil {
+		return m.handlePreviewAction(action)
+	}
 	if action == config.ActionNormalMode {
 		// Esc is resolved ahead of every widget, the overlay included: dismissing
 		// the overlay is one of the things it does rather than all it does, since
@@ -607,6 +619,8 @@ func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
 	case config.ActionGoAttachments:
 		m.goAttachments()
 		return nil
+	case config.ActionPreview:
+		return m.previewSelected()
 	case config.ActionPaneLeft:
 		m.moveFocus(PaneList)
 		return nil
@@ -919,6 +933,9 @@ func (m *Model) applyPage(result *jira.SearchResult, first bool) {
 func (m *Model) rows() int { return max(m.height-2-frameWidth, 0) }
 
 func (m *Model) View() string {
+	if m.preview != nil {
+		return m.previewView()
+	}
 	if m.help.Visible() {
 		return m.help.String()
 	}

@@ -35,6 +35,9 @@ const (
 	ActionNextTab  Action = "next_tab"
 
 	ActionGoAttachments Action = "go_attachments"
+	// ActionPreview draws the selected image attachment fullscreen. It is a
+	// bare letter because it only looks: it changes nothing on the site.
+	ActionPreview Action = "preview"
 
 	ActionSearchInPane Action = "search_in_pane"
 	ActionSearchNext   Action = "search_next"
@@ -109,6 +112,7 @@ func DefaultKeymap() Keymap {
 		ActionNextTab:  "]",
 
 		ActionGoAttachments: "ga",
+		ActionPreview:       "p",
 
 		ActionSearchInPane: "/",
 		ActionSearchNext:   "n",

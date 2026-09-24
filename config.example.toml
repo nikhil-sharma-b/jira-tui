@@ -13,7 +13,10 @@ leader = " "
 # Editor command and optional flags. Resolution is this value, then $EDITOR,
 # then vi. The scratch filename is passed as one final argument without a shell.
 # editor = "nvim -f"
-images = "off"         # "sixel" reserved for a later version
+# How p previews an image attachment: "halfblocks" draws it with coloured
+# half-block cells in any terminal, tmux included; "auto" picks the best the
+# terminal supports (today, half-blocks); "off" turns p off.
+images = "auto"
 # What R reloads: "focused" reloads only the focused pane (the list reruns its
 # query, the detail pane rereads its work item); "both" reloads the list and
 # the open detail pane together.

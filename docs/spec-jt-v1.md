@@ -431,6 +431,13 @@ The attachment list, authenticated download, and system-opener handoff are the p
 with actual value and will be built properly. The renderer will be structured so sixel
 can drop in later behind a config setting.
 
+A fullscreen preview sits beside that, not in place of it: `p` on an image draws it
+in a modal overlay with truecolor Unicode half-blocks, which are ordinary cell content
+and so survive anything tmux does. The overlay has a fixed size, so it is simply redrawn
+on resize, where an inline image would have to survive scrolling. The `images` setting
+picks the renderer (`auto`, `halfblocks`, `off`); kitty graphics and sixel are to drop
+in behind the same setting.
+
 Inline images embedded through Atlassian's Media Services API (as opposed to ordinary
 attachments) require a separate token exchange and will report a clear, specific
 limitation rather than an opaque failure.
@@ -500,7 +507,8 @@ rather than introduce a second style.
 - **Board and sprint views.** Deferred to a later version. Noted deliberately: the
   primary workflow is pinned to a single story in a tmux session, which barely touches
   a board; browsing happens through JQL.
-- **Inline image rendering.** Deferred, with the seam left in place for sixel.
+- **Inline image rendering.** Deferred. Images are previewed in a fullscreen overlay
+  instead, with the renderer chosen by config.
 - **A headless subcommand set** (`jt issue view --json` and friends) for the AI agent to
   call. Deferred, but the client module is deliberately structured so that adding it is
   a small amount of work rather than a refactor.
