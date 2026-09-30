@@ -34,6 +34,27 @@ func TestPinnedSessionStartsOnLiveFullWidthDetail(t *testing.T) {
 	}
 }
 
+func TestPinnedZoomToggleRevealsSplitAndKeepsDetailFocused(t *testing.T) {
+	client := &fakeClient{issues: []jira.Issue{detailedIssue()}}
+	d := newPausedDriver(t, ui.Options{Client: client, Config: testConfig(t, nil), Pin: "ENG-1"})
+	d.flush()
+	d.keys("]", "ctrl+w", "o")
+	if view := d.view(); !d.split() || !strings.Contains(view, "Key: ENG-1") || !strings.Contains(view, "Summary") {
+		t.Fatalf("zoom toggle did not reveal the list beside pinned detail:\n%s", view)
+	}
+	d.keys("ctrl+w", "o")
+	if view := d.view(); d.split() || strings.Contains(view, "Summary") || !strings.Contains(view, "Key: ENG-1") {
+		t.Fatalf("repeated zoom did not return to full-width detail:\n%s", view)
+	}
+	d.keys("ctrl+w", "o")
+	if !d.split() {
+		t.Error("third zoom toggle did not restore the split")
+	}
+	if got := client.issueRequests(); len(got) != 1 {
+		t.Errorf("zoom refetched pinned detail: %v", got)
+	}
+}
+
 func TestPinnedMissingItemIsExplicit(t *testing.T) {
 	client := &fakeClient{issueErrFor: map[string]error{
 		"ENG-404": &jira.Error{StatusCode: http.StatusNotFound, Op: "issue"},

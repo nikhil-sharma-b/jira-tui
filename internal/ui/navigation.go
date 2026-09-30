@@ -142,9 +142,16 @@ func (m *Model) moveFocus(target Pane) {
 }
 
 func (m *Model) toggleZoom() {
-	if !m.listVisible || !m.detailVisible || !m.detail.open {
+	if !m.detailVisible || !m.detail.open {
 		return
 	}
-	m.zoomed = !m.zoomed
+	if !m.listVisible {
+		// Direct item startup hides the list rather than setting zoomed.
+		// Treat that full-width detail like a zoom when restoring the split.
+		m.listVisible = true
+		m.zoomed = false
+	} else {
+		m.zoomed = !m.zoomed
+	}
 	m.resizePanes()
 }
