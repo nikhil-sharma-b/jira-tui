@@ -110,11 +110,12 @@ type detailPane struct {
 	rows  int
 	lines []string
 	frame int
-	// items are the openable entries the Attachments tab lists, itemLines the
-	// line each starts on, and selected the one Enter opens.
-	items     []openable
-	itemLines []int
-	selected  int
+	// items holds attachments. itemLines and selected track selectable entries
+	// on the current attachment or related-item tab.
+	items      []openable
+	itemLines  []int
+	selected   int
+	selections [tabCount]int
 	// hit is the line the last search jump landed on, -1 when there is none
 	// the next jump can count from.
 	hit int
@@ -134,6 +135,7 @@ func (d *detailPane) fetch(client jira.Client, key string) []tea.Cmd {
 	d.childrenLoading, d.children, d.childrenErr = false, nil, nil
 	d.tops = [tabCount]int{}
 	d.selected = 0
+	d.selections = [tabCount]int{}
 	d.hit = -1
 	d.rereading = false
 	d.request++
@@ -156,10 +158,11 @@ func (d *detailPane) fetch(client jira.Client, key string) []tea.Cmd {
 // reread fetches the open item again without leaving the place the user was
 // reading it at.
 func (d *detailPane) reread(client jira.Client) []tea.Cmd {
-	issue, lines, top, tops, selected := d.issue, d.lines, d.top, d.tops, d.selected
+	issue, lines, top, tops, selected, selections := d.issue, d.lines, d.top, d.tops, d.selected, d.selections
 	cmds := d.fetch(client, d.key)
 	if issue != nil {
 		d.selected = selected
+		d.selections = selections
 		d.issue, d.lines = issue, lines
 		d.rereading, d.keptTop, d.keptTops = true, top, tops
 		d.keptTops[d.tab] = top
@@ -328,10 +331,13 @@ func (d *detailPane) render() {
 	case tabAttachments:
 		lines = d.renderAttachments()
 	case tabLinks:
+		d.prepareRelatedSelection()
 		lines = d.renderLinks()
 	case tabSubtasks:
+		d.prepareRelatedSelection()
 		lines = d.renderSubtasks()
 	case tabChildren:
+		d.prepareRelatedSelection()
 		lines = d.renderChildren()
 	default:
 		lines = d.renderInfo()
@@ -439,14 +445,14 @@ func (d *detailPane) renderAttachments() []string {
 	return lines
 }
 
-// moveSelection moves through the openable entries on the Attachments tab,
+// moveSelection moves through attachments and related work items,
 // reporting false for a motion that is not one of the selecting ones, which
 // then scrolls the page as it does on every other tab.
 func (d *detailPane) moveSelection(action config.Action, count int) bool {
-	if d.tab != tabAttachments || len(d.items) == 0 {
+	if len(d.itemLines) == 0 || (d.tab != tabAttachments && !d.relatedTab()) {
 		return false
 	}
-	n, last := max(count, 1), len(d.items)-1
+	n, last := max(count, 1), len(d.itemLines)-1
 	switch action {
 	case config.ActionDown:
 		d.selected += n
@@ -497,7 +503,8 @@ func (d *detailPane) renderLinks() []string {
 			lines = append(lines, "")
 		}
 		lines = append(lines, wrapDetailLine(noteStyle.Render(link.Relation), d.width)...)
-		lines = append(lines, relatedItem(link.Key, link.Summary, link.Status, link.Type, d.width)...)
+		d.itemLines = append(d.itemLines, len(lines))
+		lines = append(lines, d.selectableRelatedItem(index, link.Key, link.Summary, link.Status, link.Type)...)
 	}
 	return lines
 }
@@ -511,7 +518,8 @@ func (d *detailPane) renderSubtasks() []string {
 		if index > 0 {
 			lines = append(lines, "")
 		}
-		lines = append(lines, relatedItem(subtask.Key, subtask.Summary, subtask.Status, subtask.Type, d.width)...)
+		d.itemLines = append(d.itemLines, len(lines))
+		lines = append(lines, d.selectableRelatedItem(index, subtask.Key, subtask.Summary, subtask.Status, subtask.Type)...)
 	}
 	return lines
 }
@@ -532,9 +540,65 @@ func (d *detailPane) renderChildren() []string {
 		if index > 0 {
 			lines = append(lines, "")
 		}
-		lines = append(lines, relatedItem(child.Key, child.Summary, child.Status, child.Type, d.width)...)
+		d.itemLines = append(d.itemLines, len(lines))
+		lines = append(lines, d.selectableRelatedItem(index, child.Key, child.Summary, child.Status, child.Type)...)
 	}
 	return lines
+}
+
+func (d *detailPane) relatedTab() bool {
+	return d.tab == tabLinks || d.tab == tabSubtasks || d.tab == tabChildren
+}
+
+func (d *detailPane) relatedKeys() []string {
+	if d.issue == nil || (d.loading && !d.rereading) {
+		return nil
+	}
+	var keys []string
+	switch d.tab {
+	case tabLinks:
+		for _, link := range d.issue.Links {
+			keys = append(keys, link.Key)
+		}
+	case tabSubtasks:
+		for _, subtask := range d.issue.Subtasks {
+			keys = append(keys, subtask.Key)
+		}
+	case tabChildren:
+		if d.childrenLoading || d.childrenErr != nil {
+			return nil
+		}
+		for _, child := range d.children {
+			keys = append(keys, child.Key)
+		}
+	}
+	return keys
+}
+
+func (d *detailPane) selectedRelatedKey() string {
+	if d.loading {
+		return ""
+	}
+	keys := d.relatedKeys()
+	if d.selected < 0 || d.selected >= len(keys) {
+		return ""
+	}
+	return keys[d.selected]
+}
+
+func (d *detailPane) prepareRelatedSelection() {
+	d.itemLines = d.itemLines[:0]
+	d.selected = min(max(d.selected, 0), max(len(d.relatedKeys())-1, 0))
+}
+
+func (d *detailPane) selectableRelatedItem(index int, key, summary string, status jira.Status, kind string) []string {
+	marker, name := "  ", keyStyle.Render(key)
+	if index == d.selected {
+		marker, name = "▸ ", selectedStyle.Render(key)
+	}
+	lines := indentedLines(marker, name+" "+summary, d.width)
+	meta := stateStyle.Render(valueOr(status.Name, "None")) + " · " + kindStyle.Render(valueOr(kind, "None"))
+	return append(lines, indentedLines("  ", meta, d.width)...)
 }
 
 // relatedItem is how another work item is written wherever one is referred to:
@@ -638,7 +702,9 @@ func (d *detailPane) setTab(tab detailTab) {
 		return
 	}
 	d.tops[d.tab] = d.top
+	d.selections[d.tab] = d.selected
 	d.tab = tab
+	d.selected = d.selections[tab]
 	d.top = d.tops[tab]
 	d.hit = -1
 	d.render()

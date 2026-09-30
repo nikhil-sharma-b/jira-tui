@@ -49,8 +49,8 @@ func (m *Model) visiblePanes() (list, detail bool) {
 // focusedKey is the work item every action on "this item" means: the one
 // detail is showing when focus is there -- in a split, zoomed, or a pinned
 // session, which are all the same thing to it -- and otherwise the selected
-// row. It lives here rather than beside any one action, because writing,
-// transitioning and yanking all have to agree on what is in front of the user.
+// row. Writes target this item; copying on related-item tabs targets their
+// selected entry instead.
 func (m *Model) focusedKey() string {
 	if m.focus == PaneDetail && m.detail.open {
 		return m.detail.key

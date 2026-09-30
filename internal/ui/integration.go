@@ -22,6 +22,9 @@ type integrationMsg struct {
 
 func (m *Model) copyFocused(url bool) tea.Cmd {
 	key := m.focusedKey()
+	if m.focus == PaneDetail && m.detail.open && m.detail.relatedTab() {
+		key = m.detail.selectedRelatedKey()
+	}
 	if key == "" {
 		m.status = errors.New("no focused work item")
 		return nil
@@ -46,6 +49,9 @@ func (m *Model) copyFocused(url bool) tea.Cmd {
 
 func (m *Model) openFocusedInBrowser() tea.Cmd {
 	key := m.focusedKey()
+	if m.focus == PaneDetail && m.detail.open && m.detail.relatedTab() {
+		key = m.detail.selectedRelatedKey()
+	}
 	if key == "" {
 		m.status = errors.New("no focused work item")
 		return nil

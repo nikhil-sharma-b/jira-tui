@@ -663,6 +663,13 @@ func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
 	case config.ActionQuit:
 		return tea.Quit
 	case config.ActionOpen:
+		if m.focus == PaneDetail && m.detail.open && m.detail.relatedTab() {
+			if key := m.detail.selectedRelatedKey(); key != "" {
+				m.detail.setTab(tabInfo)
+				return m.openKey(key, true)
+			}
+			return nil
+		}
 		if m.focus == PaneDetail && m.detail.open && m.detail.tab == tabAttachments {
 			return m.openSelected()
 		}

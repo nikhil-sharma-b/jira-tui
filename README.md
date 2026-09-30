@@ -49,6 +49,13 @@ jt               # $JT_ISSUE, else inferred from git branch, else your open work
 
 Press `?` for the keymap.
 
+In the Links, Subtasks, and Children tabs, use `j` / `k` to select a work item,
+`gg` / `G` to select the first or last, and `Enter` to open it. Counts work as
+they do for attachments. `<leader>y` copies the selected item's key and
+`<leader>Y` copies its URL, and `<leader>o` opens it in your browser.
+The default leader is Space. `Ctrl-o` returns to the
+previously opened item.
+
 Comments and description edits open in the configured external editor. Set
 `editor = "nvim -f"` in config, or leave it unset to use `$EDITOR`, then `vi`.
 The editor command may include quoted flags. `jt` runs it directly, not through
