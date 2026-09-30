@@ -152,6 +152,10 @@ func (m *Model) handleEditorStart(msg editorStartMsg) tea.Cmd {
 	}
 	args := append(append([]string(nil), m.editorCommand[1:]...), op.path)
 	command := exec.Command(m.editorCommand[0], args...)
+	// Run wraps the renderer output to serialize graphics writes. exec.Cmd
+	// treats that wrapper as a pipe, so editors lose their terminal dimensions
+	// and terminal UI support. Give the editor the actual terminal file instead.
+	command.Stdout = os.Stdout
 	return m.editorExec(command, func(err error) tea.Msg {
 		return editorDoneMsg{operation: op, err: err}
 	})

@@ -234,8 +234,8 @@ func queryTerminal(kitty bool) imageview.Answers {
 // output is the terminal bubbletea draws on, shared with the graphics
 // commands the preview sends outside the frame. Writes take turns, so a
 // command never lands in the middle of a frame or a frame in the middle of a
-// command. It is still the *os.File underneath, which is how bubbletea finds
-// the terminal's size and puts it in raw mode.
+// command. Its promoted Fd method lets bubbletea find the terminal's size and
+// put it in raw mode. Child processes need the actual File to inherit a tty.
 type output struct {
 	*os.File
 	mu sync.Mutex
