@@ -56,6 +56,10 @@ they do for attachments. `<leader>y` copies the selected item's key and
 The default leader is Space. `Ctrl-o` returns to the
 previously opened item.
 
+The Comments tab uses the same selection keys. `Enter` opens the selected
+comment in your browser, `<leader>y` copies its ID, and `<leader>Y` copies its
+direct URL. `<leader>o` also opens the selected comment in your browser.
+
 Comments and description edits open in the configured external editor. Set
 `editor = "nvim -f"` in config, or leave it unset to use `$EDITOR`, then `vi`.
 The editor command may include quoted flags. `jt` runs it directly, not through

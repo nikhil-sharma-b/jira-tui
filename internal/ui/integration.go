@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -21,6 +22,18 @@ type integrationMsg struct {
 }
 
 func (m *Model) copyFocused(url bool) tea.Cmd {
+	if m.focus == PaneDetail && m.detail.open && m.detail.tab == tabComments {
+		comment, ok := m.detail.selectedComment()
+		if !ok {
+			m.status = errors.New("no selected comment")
+			return nil
+		}
+		text, success := comment.ID, "yanked comment ID for "+comment.ID
+		if url {
+			text, success = m.commentURL(comment.ID), "yanked comment URL for "+comment.ID
+		}
+		return m.copyValue("comment "+comment.ID, text, success)
+	}
 	key := m.focusedKey()
 	if m.focus == PaneDetail && m.detail.open && m.detail.relatedTab() {
 		key = m.detail.selectedRelatedKey()
@@ -33,12 +46,16 @@ func (m *Model) copyFocused(url bool) tea.Cmd {
 	if url {
 		text = m.client.BrowseURL(key)
 	}
-	copyText := m.copyText
-	generation := m.noticeGeneration
 	success := fmt.Sprintf("yanked key for %s", key)
 	if url {
 		success = fmt.Sprintf("yanked URL for %s", key)
 	}
+	return m.copyValue(key, text, success)
+}
+
+func (m *Model) copyValue(key, text, success string) tea.Cmd {
+	copyText := m.copyText
+	generation := m.noticeGeneration
 	return func() tea.Msg {
 		return integrationMsg{
 			verb: "copy", key: key, success: success, generation: generation,
@@ -47,16 +64,31 @@ func (m *Model) copyFocused(url bool) tea.Cmd {
 	}
 }
 
+func (m *Model) commentURL(id string) string {
+	return m.client.BrowseURL(m.detail.key) + "?focusedCommentId=" + url.QueryEscape(id)
+}
+
 func (m *Model) openFocusedInBrowser() tea.Cmd {
 	key := m.focusedKey()
 	if m.focus == PaneDetail && m.detail.open && m.detail.relatedTab() {
 		key = m.detail.selectedRelatedKey()
 	}
+	if m.focus == PaneDetail && m.detail.open && m.detail.tab == tabComments {
+		comment, ok := m.detail.selectedComment()
+		if !ok {
+			m.status = errors.New("no selected comment")
+			return nil
+		}
+		return m.openBrowserURL("comment "+comment.ID, m.commentURL(comment.ID))
+	}
 	if key == "" {
 		m.status = errors.New("no focused work item")
 		return nil
 	}
-	url := m.client.BrowseURL(key)
+	return m.openBrowserURL(key, m.client.BrowseURL(key))
+}
+
+func (m *Model) openBrowserURL(key, url string) tea.Cmd {
 	openURL := m.openURL
 	return func() tea.Msg {
 		return integrationMsg{verb: "open", key: key, err: openURL(url)}

@@ -111,7 +111,7 @@ type detailPane struct {
 	lines []string
 	frame int
 	// items holds attachments. itemLines and selected track selectable entries
-	// on the current attachment or related-item tab.
+	// on the current attachment, comment, or related-item tab.
 	items      []openable
 	itemLines  []int
 	selected   int
@@ -396,6 +396,7 @@ func (d *detailPane) renderDetails() []string {
 }
 
 func (d *detailPane) renderComments() []string {
+	d.itemLines = d.itemLines[:0]
 	switch {
 	case d.commentsLoading:
 		return []string{spinnerFrames[d.frame] + " Loading comments…"}
@@ -404,14 +405,31 @@ func (d *detailPane) renderComments() []string {
 	case len(d.comments) == 0:
 		return []string{"No comments."}
 	}
+	d.selected = min(max(d.selected, 0), len(d.comments)-1)
 	var lines []string
 	for index, comment := range d.comments {
 		if index > 0 {
 			lines = append(lines, "", commentSeparator(d.width), "")
 		}
-		lines = append(lines, renderComment(comment, d.width)...)
+		d.itemLines = append(d.itemLines, len(lines))
+		rendered := renderComment(comment, max(d.width-2, 1))
+		for n, line := range rendered {
+			marker := "  "
+			if n == 0 && index == d.selected {
+				marker, line = "▸ ", selectedStyle.Render(ansi.Strip(line))
+			}
+			lines = append(lines, marker+line)
+		}
 	}
 	return lines
+}
+
+func (d *detailPane) selectedComment() (jira.Comment, bool) {
+	if d.tab != tabComments || d.issue == nil || d.loading || d.commentsLoading || d.commentsErr != nil || d.selected < 0 || d.selected >= len(d.comments) {
+		return jira.Comment{}, false
+	}
+	comment := d.comments[d.selected]
+	return comment, comment.ID != ""
 }
 
 // renderAttachments lists what can be opened from the item: its attachments,
@@ -445,11 +463,11 @@ func (d *detailPane) renderAttachments() []string {
 	return lines
 }
 
-// moveSelection moves through attachments and related work items,
+// moveSelection moves through attachments, comments, and related work items,
 // reporting false for a motion that is not one of the selecting ones, which
 // then scrolls the page as it does on every other tab.
 func (d *detailPane) moveSelection(action config.Action, count int) bool {
-	if len(d.itemLines) == 0 || (d.tab != tabAttachments && !d.relatedTab()) {
+	if len(d.itemLines) == 0 || (d.tab != tabAttachments && d.tab != tabComments && !d.relatedTab()) {
 		return false
 	}
 	n, last := max(count, 1), len(d.itemLines)-1

@@ -154,6 +154,76 @@ func TestFocusedIssueIntegrations(t *testing.T) {
 	}
 }
 
+func TestCommentSelectionCopyAndBrowserOpening(t *testing.T) {
+	client := &fakeClient{
+		issues: []jira.Issue{detailedIssue()},
+		comments: map[string][]jira.Comment{"ENG-1": {
+			{ID: "10001", Author: &jira.User{DisplayName: "First author"}},
+			{ID: "10002", Author: &jira.User{DisplayName: "Second author"}},
+			{ID: "10003", Author: &jira.User{DisplayName: "Third author"}},
+		}},
+	}
+	var copied, opened []string
+	d := newPausedDriver(t, ui.Options{
+		Client: client, Config: testConfig(t, nil),
+		Copy:    func(text string) error { copied = append(copied, text); return nil },
+		OpenURL: func(url string) error { opened = append(opened, url); return nil },
+	})
+	d.flush()
+	d.keys("enter")
+	d.flush()
+	d.keys("]", "]", "2", "j", "k")
+	if got := d.view(); !strings.Contains(got, "▸ Second author") {
+		t.Fatalf("comment selection missing:\n%s", got)
+	}
+	d.keys(" ", "y", " ", "Y", "enter", " ", "o")
+	commentURL := "https://example.atlassian.net/browse/ENG-1?focusedCommentId=10002"
+	if want := []string{"10002", commentURL}; !slices.Equal(copied, want) {
+		t.Fatalf("copied = %q, want %q", copied, want)
+	}
+	if want := []string{commentURL, commentURL}; !slices.Equal(opened, want) {
+		t.Fatalf("opened = %q, want %q", opened, want)
+	}
+	d.keys("]", "[", "R")
+	d.flush()
+	if got := d.view(); !strings.Contains(got, "▸ Second author") {
+		t.Fatalf("tab switch or reload lost comment selection:\n%s", got)
+	}
+	d.keys("G", " ", "y", "g", "g", " ", "y")
+	if want := []string{"10002", commentURL, "10003", "10001"}; !slices.Equal(copied, want) {
+		t.Fatalf("first/last comment copies = %q, want %q", copied, want)
+	}
+}
+
+func TestUnavailableCommentsDoNotCopyOrOpenTheStory(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		name := "empty"
+		client := &fakeClient{issues: []jira.Issue{detailedIssue()}}
+		if failed {
+			name = "failed"
+			client.commentErrFor = map[string]error{"ENG-1": fmt.Errorf("comments unavailable")}
+		}
+		t.Run(name, func(t *testing.T) {
+			var copied, opened []string
+			d := newPausedDriver(t, ui.Options{
+				Client: client, Config: testConfig(t, nil),
+				Copy:    func(text string) error { copied = append(copied, text); return nil },
+				OpenURL: func(url string) error { opened = append(opened, url); return nil },
+			})
+			d.flush()
+			d.keys("enter")
+			d.flush()
+			d.keys("]", "]", "j", "enter", " ", "y", " ", "Y", " ", "o")
+			if len(copied) != 0 || len(opened) != 0 {
+				t.Fatalf("unavailable comments copied %q, opened %q", copied, opened)
+			}
+			if got := d.view(); !strings.Contains(got, "no selected comment") {
+				t.Fatalf("missing selection feedback:\n%s", got)
+			}
+		})
+	}
+}
+
 func TestFocusedIssueIntegrationFeedbackClearsOnTheNextKey(t *testing.T) {
 	d := newPausedDriver(t, ui.Options{
 		Client: &fakeClient{issues: sampleIssues(2)},
