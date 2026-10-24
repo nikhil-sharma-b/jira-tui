@@ -1,0 +1,67 @@
+HTTP/1.1 200 OK
+Content-Type: application/json;charset=UTF-8
+
+{
+  "id": 92,
+  "name": "ENG board",
+  "type": "kanban",
+  "self": "https://jira.example.net/rest/agile/1.0/board/92/configuration",
+  "location": {
+    "type": "project",
+    "key": "ENG",
+    "id": "10000",
+    "self": "https://jira.example.net/rest/api/2/project/10000",
+    "name": "Engineering"
+  },
+  "filter": {
+    "id": "10001",
+    "self": "https://jira.example.net/rest/api/2/filter/10001"
+  },
+  "subQuery": {
+    "query": "fixVersion in unreleasedVersions() OR fixVersion is EMPTY"
+  },
+  "columnConfig": {
+    "columns": [
+      {
+        "name": "To Do",
+        "statuses": [
+          {
+            "id": "10000",
+            "self": "https://jira.example.net/rest/api/2/status/10000"
+          }
+        ]
+      },
+      {
+        "name": "In Progress",
+        "statuses": [
+          {
+            "id": "3",
+            "self": "https://jira.example.net/rest/api/2/status/3"
+          },
+          {
+            "id": "10002",
+            "self": "https://jira.example.net/rest/api/2/status/10002"
+          }
+        ],
+        "max": 4
+      },
+      {
+        "name": "Done",
+        "statuses": [
+          {
+            "id": "10001",
+            "self": "https://jira.example.net/rest/api/2/status/10001"
+          }
+        ]
+      },
+      {
+        "name": "Archive",
+        "statuses": []
+      }
+    ],
+    "constraintType": "issueCount"
+  },
+  "ranking": {
+    "rankCustomFieldId": 10019
+  }
+}

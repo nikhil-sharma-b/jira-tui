@@ -127,6 +127,14 @@ type Model struct {
 	// the list is up so that switching back finds it where it was left.
 	view  string
 	board board
+	// rankField is the site's Rank field, which orders the cards in a lane the
+	// way Jira's own board orders them. Empty when the site has none.
+	rankField string
+	// layout is the Jira board the board view follows, nil when there is none
+	// to follow. layoutFor is what it was looked up for, which is what a
+	// response that outlived its question is recognised by.
+	layout    *jira.Board
+	layoutFor boardTarget
 
 	listVisible   bool
 	detailVisible bool
@@ -424,12 +432,17 @@ func (m *Model) searchOptions(pageToken string) jira.SearchOptions {
 }
 
 // searchFields is what a search asks for: the columns' fields, and on the
-// board the status as well, since the lanes are statuses whether or not a
-// column shows one.
+// board the status and the rank as well, since the lanes are statuses and the
+// cards in them are in rank order whether or not a column shows either.
 func (m *Model) searchFields() []string {
 	fields := ColumnFields(m.columns)
-	if m.view == config.ViewBoard && !slices.Contains(fields, "status") {
-		fields = append(fields, "status")
+	if m.view != config.ViewBoard {
+		return fields
+	}
+	for _, f := range []string{"status", m.rankField} {
+		if f != "" && !slices.Contains(fields, f) {
+			fields = append(fields, f)
+		}
 	}
 	return fields
 }
@@ -540,6 +553,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case downloadTickMsg:
 		return m, m.handleDownloadTick(msg)
+
+	case cachedLayoutMsg:
+		return m, m.handleCachedLayout(msg)
+
+	case layoutMsg:
+		return m, m.handleLayout(msg)
 	}
 	return m, nil
 }
@@ -790,6 +809,11 @@ func (m *Model) reload() tea.Cmd {
 	var cmds []tea.Cmd
 	if both || !detail {
 		cmds = append(cmds, m.reloadList())
+		if m.view == config.ViewBoard && m.layoutFor != (boardTarget{}) {
+			// The board's columns are part of what is on screen, and R is
+			// what the user presses when they do not believe it.
+			cmds = append(cmds, m.fetchLayout(m.layoutFor))
+		}
 	}
 	if detail {
 		m.status = nil
@@ -955,13 +979,13 @@ func (m *Model) handleFields(msg fieldsMsg) tea.Cmd {
 		m.err = err
 		return tea.Quit
 	}
-	before := m.columns
-	m.columns = columns
+	before, asked := m.columns, m.searchFields()
+	m.columns, m.rankField = columns, RankField(msg.fields)
 	m.store.putFields(msg.fields)
 	if before == nil {
 		return m.loadPage()
 	}
-	if slices.Equal(ColumnFields(before), ColumnFields(columns)) {
+	if slices.Equal(asked, m.searchFields()) {
 		// The cached columns were right, so the search already in flight is
 		// asking for the correct fields and nothing needs re-requesting.
 		return nil
@@ -996,7 +1020,7 @@ func (m *Model) handlePage(msg pageMsg) tea.Cmd {
 	// is a token to follow, and re-deriving it here would only invite the two
 	// answers to drift apart.
 	m.applyPage(msg.result, msg.first)
-	return m.maybePage()
+	return tea.Batch(m.maybePage(), m.ensureLayout())
 }
 
 // applyPage puts a result on screen. A first page replaces what is there,
@@ -1067,10 +1091,13 @@ func (m *Model) paneWidths() (int, int) {
 // view it is drawn in. The detail pane is named for the item in it, since that
 // is what a user looking at two panes needs to tell them apart.
 func (m *Model) listTitle() string {
-	if m.view == config.ViewBoard {
-		return "Board"
+	if m.view != config.ViewBoard {
+		return "Work Items"
 	}
-	return "Work Items"
+	if m.layout != nil && m.layout.Name != "" {
+		return "Board · " + m.layout.Name
+	}
+	return "Board"
 }
 
 // paneHint is the key that moves focus to a pane, drawn in its frame so the

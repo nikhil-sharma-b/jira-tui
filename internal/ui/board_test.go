@@ -1,6 +1,7 @@
 package ui_test
 
 import (
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -8,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/nikhil-sharma-b/jira-tui/internal/config"
 	"github.com/nikhil-sharma-b/jira-tui/internal/jira"
+	"github.com/nikhil-sharma-b/jira-tui/internal/ui"
 )
 
 // boardIssues spreads n work items over three statuses, in the query's order
@@ -16,15 +18,59 @@ import (
 // Progress ENG-1 and ENG-4, Done ENG-2 and ENG-5.
 func boardIssues(n int) []jira.Issue {
 	statuses := []jira.Status{
-		{Name: "In Progress", Category: "indeterminate"},
-		{Name: "Done", Category: "done"},
-		{Name: "To Do", Category: "new"},
+		{ID: "3", Name: "In Progress", Category: "indeterminate"},
+		{ID: "2", Name: "Done", Category: "done"},
+		{ID: "1", Name: "To Do", Category: "new"},
 	}
 	issues := sampleIssues(n)
 	for i := range issues {
 		issues[i].Status = statuses[i%len(statuses)]
 	}
 	return issues
+}
+
+// rankField is the id the test site gives its Rank field.
+const rankField = "customfield_10019"
+
+// ranked gives work items Jira ranks, in the order they are listed: the first
+// is ranked highest.
+func ranked(issues []jira.Issue, keys ...string) {
+	for r, key := range keys {
+		for i := range issues {
+			if issues[i].Key == key {
+				if issues[i].Raw == nil {
+					issues[i].Raw = map[string]any{}
+				}
+				issues[i].Raw[rankField] = "0|i0000" + string(rune('a'+r)) + ":"
+			}
+		}
+	}
+}
+
+// engBoard is a kanban board for ENG whose columns are not the order the
+// status categories would put them in, with In Review folded into In
+// Progress and an empty column at the end.
+func engBoard() jira.Board {
+	return jira.Board{ID: 92, Name: "ENG board", Type: "kanban", Columns: []jira.BoardColumn{
+		{Name: "Done", Statuses: []string{"2"}},
+		{Name: "To Do", Statuses: []string{"1"}},
+		{Name: "In Progress", Statuses: []string{"3", "4"}},
+		{Name: "Archive"},
+	}}
+}
+
+func boardClient(issues []jira.Issue) *fakeClient {
+	return &fakeClient{
+		issues: issues,
+		boards: map[string][]jira.Board{"ENG": {
+			{ID: 84, Name: "ENG sprints", Type: "scrum"},
+			{ID: 92, Name: "ENG board", Type: "kanban"},
+		}},
+		boardFor: map[int]jira.Board{92: engBoard(), 7: {ID: 7, Name: "Ops", Type: "kanban", Columns: []jira.BoardColumn{
+			{Name: "Doing", Statuses: []string{"3"}},
+			{Name: "Done", Statuses: []string{"2"}},
+		}}},
+	}
 }
 
 func boardConfig(t *testing.T, columns []string) *config.Config {
@@ -218,8 +264,8 @@ func TestTheBoardAsksForStatusWhenNoColumnShowsIt(t *testing.T) {
 	client := &fakeClient{issues: boardIssues(6)}
 	d := newDriver(t, client, boardConfig(t, []string{"key", "summary"}))
 	reqs := client.requests()
-	if len(reqs) == 0 || strings.Join(reqs[0].Fields, ",") != "summary,status" {
-		t.Fatalf("the board searched with %v, want summary and status", reqs)
+	if len(reqs) == 0 || strings.Join(reqs[0].Fields, ",") != "summary,status,"+rankField {
+		t.Fatalf("the board searched with %v, want summary, status and the rank", reqs)
 	}
 	assertInOrder(t, d.laneHeader(), "To Do 2", "In Progress 2", "Done 2")
 }
@@ -236,14 +282,11 @@ func TestSwitchingToTheBoardFetchesWhatItNeeds(t *testing.T) {
 	assertInOrder(t, d.laneHeader(), "To Do 2", "In Progress 2", "Done 2")
 }
 
-func TestSwitchingViewsWithAStatusColumnFetchesNothing(t *testing.T) {
+func TestTheListDoesNotAskForTheRank(t *testing.T) {
 	client := &fakeClient{issues: boardIssues(6)}
-	d := newDriver(t, client, testConfig(t, nil))
-	before := len(client.requests())
-	d.keys("g", "v")
-	d.keys("g", "v")
-	if got := len(client.requests()); got != before {
-		t.Errorf("switching views made %d searches, want none: the rows already carry their status", got-before)
+	newDriver(t, client, testConfig(t, nil))
+	if reqs := client.requests(); slices.Contains(reqs[0].Fields, rankField) {
+		t.Errorf("the list searched with %v, want only its columns' fields", reqs[0].Fields)
 	}
 }
 
@@ -338,5 +381,144 @@ func TestALongSummaryIsCutAtTwoLines(t *testing.T) {
 	view := d.view()
 	if strings.Contains(view, "TAIL") || !strings.Contains(view, "…") {
 		t.Errorf("a long summary was not cut short with an ellipsis:\n%s", view)
+	}
+}
+
+func TestCardsAreInJirasRankOrder(t *testing.T) {
+	issues := boardIssues(9)
+	// In Progress holds ENG-1, ENG-4 and ENG-7, in that order by the query.
+	ranked(issues, "ENG-7", "ENG-1", "ENG-4")
+	d := newDriver(t, &fakeClient{issues: issues}, boardConfig(t, nil))
+	assertInOrder(t, d.view(), "ENG-7", "ENG-1", "ENG-4")
+	d.keys("g", "g")
+	if got := d.selected(); got != "ENG-7" {
+		t.Errorf("gg selected %q, want the highest ranked card, ENG-7", got)
+	}
+}
+
+func TestUnrankedCardsGoAfterRankedOnes(t *testing.T) {
+	issues := boardIssues(9)
+	ranked(issues, "ENG-7")
+	d := newDriver(t, &fakeClient{issues: issues}, boardConfig(t, nil))
+	assertInOrder(t, d.view(), "ENG-7", "ENG-1", "ENG-4")
+}
+
+func TestTheBoardFollowsTheProjectsJiraBoard(t *testing.T) {
+	issues := boardIssues(6)
+	issues[3].Status = jira.Status{ID: "4", Name: "In Review", Category: "indeterminate"}
+	client := boardClient(issues)
+	d := newDriver(t, client, boardConfig(t, nil))
+
+	// The kanban board, not the scrum one listed before it.
+	if projects, ids := client.boardRequests(); !slices.Equal(projects, []string{"ENG"}) || !slices.Equal(ids, []int{92}) {
+		t.Fatalf("looked up boards for %v and read %v, want ENG's kanban board, 92", projects, ids)
+	}
+	if !strings.Contains(d.lines()[0], "ENG board") {
+		t.Errorf("the pane is not named for the board it follows:\n%s", d.view())
+	}
+	// The board's own order, In Review in the column it is mapped to, and the
+	// empty column drawn.
+	d.send(tea.WindowSizeMsg{Width: 130, Height: 22})
+	assertInOrder(t, d.laneHeader(), "Done 2", "To Do 2", "In Progress 2", "Archive 0")
+	if strings.Contains(d.laneHeader(), "In Review") {
+		t.Errorf("In Review has a lane of its own: %q", d.laneHeader())
+	}
+}
+
+func TestLaneMotionsPassOverEmptyColumns(t *testing.T) {
+	client := boardClient(boardIssues(6))
+	board := engBoard()
+	board.Columns = []jira.BoardColumn{
+		{Name: "To Do", Statuses: []string{"1"}},
+		{Name: "Blocked"},
+		{Name: "In Progress", Statuses: []string{"3"}},
+		{Name: "Done", Statuses: []string{"2"}},
+	}
+	client.boardFor[92] = board
+	d := newDriver(t, client, boardConfig(t, nil))
+	d.send(tea.WindowSizeMsg{Width: 130, Height: 22})
+	assertInOrder(t, d.laneHeader(), "To Do 2", "Blocked 0", "In Progress 2", "Done 2")
+
+	d.keys("h")
+	if got := d.selected(); got != "ENG-3" {
+		t.Fatalf("h selected %q, want ENG-3 in To Do", got)
+	}
+	d.keys("l")
+	if got := d.selected(); got != "ENG-1" {
+		t.Errorf("l from To Do selected %q, want ENG-1 in In Progress, past the empty column", got)
+	}
+}
+
+func TestStatusesTheBoardDoesNotMapGetLanesOfTheirOwn(t *testing.T) {
+	issues := boardIssues(6)
+	issues[5].Status = jira.Status{ID: "9", Name: "Parked", Category: "new"}
+	d := newDriver(t, boardClient(issues), boardConfig(t, nil))
+	d.send(tea.WindowSizeMsg{Width: 160, Height: 22})
+	assertInOrder(t, d.laneHeader(), "Done 2", "To Do 1", "In Progress 2", "Archive 0", "Parked 1")
+}
+
+func TestAConfiguredBoardIsFollowed(t *testing.T) {
+	client := boardClient(boardIssues(6))
+	cfg := boardConfig(t, nil)
+	cfg.Board = 7
+	d := newDriver(t, client, cfg)
+	if projects, ids := client.boardRequests(); len(projects) != 0 || !slices.Equal(ids, []int{7}) {
+		t.Fatalf("looked up boards for %v and read %v, want board 7 read and nothing looked up", projects, ids)
+	}
+	assertInOrder(t, d.laneHeader(), "Doing 2", "Done 2", "To Do 2")
+}
+
+func TestResultsFromSeveralProjectsAreGroupedByStatus(t *testing.T) {
+	issues := boardIssues(6)
+	issues[1].Key = "OPS-2"
+	client := boardClient(issues)
+	d := newDriver(t, client, boardConfig(t, nil))
+	if projects, ids := client.boardRequests(); len(projects)+len(ids) != 0 {
+		t.Errorf("looked up boards for %v and read %v, want nothing: no one board shows two projects", projects, ids)
+	}
+	assertInOrder(t, d.laneHeader(), "To Do 2", "In Progress 2", "Done 2")
+}
+
+func TestAFailedBoardLookupIsReportedAndTheLanesStayUp(t *testing.T) {
+	client := boardClient(boardIssues(6))
+	client.boardsErr = errors.New("boards: 403 Forbidden")
+	d := newDriver(t, client, boardConfig(t, nil))
+	if got := d.statusLine(); !strings.Contains(got, "403") {
+		t.Errorf("status line %q does not report the failed lookup", got)
+	}
+	assertInOrder(t, d.laneHeader(), "To Do 2", "In Progress 2", "Done 2")
+}
+
+func TestTheListDoesNotLookUpBoards(t *testing.T) {
+	client := boardClient(boardIssues(6))
+	newDriver(t, client, testConfig(t, nil))
+	if projects, ids := client.boardRequests(); len(projects)+len(ids) != 0 {
+		t.Errorf("the list looked up boards for %v and read %v", projects, ids)
+	}
+}
+
+func TestReloadRereadsTheBoard(t *testing.T) {
+	client := boardClient(boardIssues(6))
+	d := newDriver(t, client, boardConfig(t, nil))
+	d.keys("R")
+	if _, ids := client.boardRequests(); !slices.Equal(ids, []int{92, 92}) {
+		t.Errorf("R read boards %v, want board 92 read again", ids)
+	}
+}
+
+func TestTheBoardsLayoutIsCachedAcrossSessions(t *testing.T) {
+	c := openCache(t)
+	cfg := boardConfig(t, nil)
+	first := newPausedDriver(t, ui.Options{Client: boardClient(boardIssues(6)), Config: cfg, Cache: c})
+	first.flush()
+
+	client := boardClient(boardIssues(6))
+	d := newPausedDriver(t, ui.Options{Client: client, Config: cfg, Cache: c})
+	d.flush()
+	if projects, ids := client.boardRequests(); len(projects)+len(ids) != 0 {
+		t.Errorf("a second session looked up boards for %v and read %v, want the cached layout", projects, ids)
+	}
+	if !strings.Contains(d.lines()[0], "ENG board") {
+		t.Errorf("the second session does not follow the cached board:\n%s", d.view())
 	}
 }

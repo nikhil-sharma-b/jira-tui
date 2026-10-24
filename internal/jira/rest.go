@@ -63,6 +63,8 @@ const (
 	// apiWrite is REST v2: rich text is a plain wiki-markup string, so we
 	// never build ADF.
 	apiWrite = "/rest/api/2"
+	// apiAgile is the Jira Software API, which is where boards live.
+	apiAgile = "/rest/agile/1.0"
 )
 
 // REST is the Client implementation. One instance holds one keep-alive

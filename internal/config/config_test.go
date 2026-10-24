@@ -77,6 +77,7 @@ leader = ","
 images = "halfblocks"
 reload = "both"
 view = "board"
+board = 92
 columns = ["key", "summary"]
 default_query = "project = PROJ"
 
@@ -105,6 +106,9 @@ help = ""
 	}
 	if got, want := cfg.View, "board"; got != want {
 		t.Errorf("view = %q, want %q", got, want)
+	}
+	if got, want := cfg.Board, 92; got != want {
+		t.Errorf("board = %d, want %d", got, want)
 	}
 	if got, want := strings.Join(cfg.Columns, ","), "key,summary"; got != want {
 		t.Errorf("columns = %q, want %q", got, want)
@@ -183,6 +187,11 @@ func TestLoadErrorsNameTheOffendingKey(t *testing.T) {
 			name:     "unknown view",
 			contents: topLevel("view = \"kanban\"\n"),
 			wantKey:  "view",
+		},
+		{
+			name:     "negative board",
+			contents: topLevel("board = -1\n"),
+			wantKey:  "board",
 		},
 	}
 	for _, tt := range tests {

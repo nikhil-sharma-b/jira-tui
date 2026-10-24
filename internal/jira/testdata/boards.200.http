@@ -1,0 +1,33 @@
+HTTP/1.1 200 OK
+Content-Type: application/json;charset=UTF-8
+
+{
+  "maxResults": 50,
+  "startAt": 0,
+  "total": 2,
+  "isLast": true,
+  "values": [
+    {
+      "id": 84,
+      "self": "https://jira.example.net/rest/agile/1.0/board/84",
+      "name": "ENG sprints",
+      "type": "scrum",
+      "location": {
+        "projectId": 10000,
+        "projectKey": "ENG",
+        "projectName": "Engineering"
+      }
+    },
+    {
+      "id": 92,
+      "self": "https://jira.example.net/rest/agile/1.0/board/92",
+      "name": "ENG board",
+      "type": "kanban",
+      "location": {
+        "projectId": 10000,
+        "projectKey": "ENG",
+        "projectName": "Engineering"
+      }
+    }
+  ]
+}

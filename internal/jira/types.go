@@ -12,9 +12,12 @@ type User struct {
 }
 
 type Status struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Category string `json:"-"` // statusCategory.key: new | indeterminate | done
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// Category is statusCategory.key: new | indeterminate | done. It has a
+	// JSON name of its own, flat rather than nested as on the wire, so that a
+	// cached result keeps it.
+	Category string `json:"category,omitempty"`
 }
 
 type Priority struct {
@@ -107,6 +110,26 @@ type Issue struct {
 type RawDocument []byte
 
 func (d RawDocument) IsEmpty() bool { return len(d) == 0 || string(d) == "null" }
+
+// Board is an agile board's layout: its columns, left to right, and which
+// statuses each one holds. A board is how a team has chosen to see its work,
+// so the TUI's board follows it rather than guessing an order from statuses.
+type Board struct {
+	ID   int
+	Name string
+	// Type is kanban, scrum, or simple for a team-managed project's board.
+	Type string
+	// Columns is empty on a board listed by Boards, which reports only which
+	// boards there are; Board fetches the columns.
+	Columns []BoardColumn
+}
+
+// BoardColumn is one column of a board and the ids of the statuses mapped to
+// it. A column may hold several statuses, or none.
+type BoardColumn struct {
+	Name     string
+	Statuses []string
+}
 
 type SearchOptions struct {
 	JQL string

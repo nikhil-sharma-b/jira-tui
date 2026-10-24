@@ -7,6 +7,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -72,28 +73,74 @@ type lane struct {
 	cards []int
 }
 
-// lanes groups the result set by status. Lanes run in the order work moves
-// through them -- to do, in progress, done -- and within that in the order the
-// query first met them, which is the closest thing to the workflow's own order
-// that a search reports.
-func lanes(issues []*jira.Issue) []lane {
+// lanes groups the result set into the board's lanes. When there is a Jira
+// board to follow, its columns come first, in its order, empty ones included,
+// each holding the work items whose status is mapped to it. A status the board
+// does not map -- or every status, when there is no board -- gets a lane of its
+// own after them, in the order work moves through them, to do, in progress,
+// done, and within that in the order the query first met them. Inside a lane
+// the cards are in Jira's rank order, as on its own board.
+func (m *Model) lanes() []lane {
 	var out []lane
-	at := map[string]int{}
-	for i, issue := range issues {
-		name := issue.Status.Name
-		if name == "" {
-			name = noStatus
+	column := map[string]int{}
+	byName := map[string]int{}
+	if m.layout != nil {
+		for _, c := range m.layout.Columns {
+			for _, id := range c.Statuses {
+				column[id] = len(out)
+			}
+			byName[c.Name] = len(out)
+			out = append(out, lane{name: c.Name})
 		}
-		j, ok := at[name]
-		if !ok {
-			j = len(out)
-			at[name] = j
-			out = append(out, lane{name: name, rank: statusRank(issue.Status.Category)})
+	}
+	mapped := len(out)
+	for i, issue := range m.list.issues {
+		j, ok := column[issue.Status.ID]
+		if !ok || issue.Status.ID == "" {
+			// A status the board does not map joins the column of the same
+			// name, if it has one, rather than standing beside it under the
+			// same heading.
+			name := issue.Status.Name
+			if name == "" {
+				name = noStatus
+			}
+			if j, ok = byName[name]; !ok {
+				j = len(out)
+				byName[name] = j
+				out = append(out, lane{name: name, rank: statusRank(issue.Status.Category)})
+			}
 		}
 		out[j].cards = append(out[j].cards, i)
 	}
-	slices.SortStableFunc(out, func(a, b lane) int { return a.rank - b.rank })
+	slices.SortStableFunc(out[mapped:], func(a, b lane) int { return a.rank - b.rank })
+	if m.rankField != "" {
+		for _, l := range out {
+			m.sortByRank(l.cards)
+		}
+	}
 	return out
+}
+
+// sortByRank puts a lane's cards in rank order. A rank is a string that sorts
+// as it reads, which is the whole design of Jira's ranking; a card with none
+// goes after the ranked ones, in the query's order.
+func (m *Model) sortByRank(cards []int) {
+	rank := func(i int) string {
+		s, _ := m.list.issues[i].Raw[m.rankField].(string)
+		return s
+	}
+	slices.SortStableFunc(cards, func(a, b int) int {
+		ra, rb := rank(a), rank(b)
+		switch {
+		case ra == rb:
+			return 0
+		case ra == "":
+			return 1
+		case rb == "":
+			return -1
+		}
+		return strings.Compare(ra, rb)
+	})
 }
 
 // statusRank orders status categories left to right. A status with no
@@ -268,7 +315,7 @@ func (m *Model) boardSize() (width, rows int) {
 // lane, and a lane motion keeps the selection the same number of cards down
 // the screen, which is where the eye already is.
 func (m *Model) moveOnBoard(action config.Action, count int) {
-	ls := lanes(m.list.issues)
+	ls := m.lanes()
 	li, pi := locate(ls, m.list.cursor)
 	if li < 0 {
 		return
@@ -306,11 +353,12 @@ func (m *Model) moveOnBoard(action config.Action, count int) {
 	case config.ActionViewportBot:
 		pi = top + visible - n
 	case config.ActionLaneLeft, config.ActionLaneRight:
+		step := 1
 		if action == config.ActionLaneLeft {
-			n = -n
+			step = -1
 		}
 		row := pi - top
-		li = min(max(li+n, 0), len(ls)-1)
+		li = nextLane(ls, li, step, n)
 		pi = m.laneTop(ls[li], laneWidth, rows, -1) + row
 	default:
 		return
@@ -321,13 +369,30 @@ func (m *Model) moveOnBoard(action config.Action, count int) {
 	m.board.left = follow(m.board.left, li, shown, len(ls))
 }
 
+// nextLane is the lane n lanes from li in the direction of step, passing over
+// the empty ones -- there is no card in them to select -- and stopping at the
+// last lane with a card in it when there are fewer than n.
+func nextLane(ls []lane, li, step, n int) int {
+	for range n {
+		next := li + step
+		for next >= 0 && next < len(ls) && len(ls[next].cards) == 0 {
+			next += step
+		}
+		if next < 0 || next >= len(ls) {
+			break
+		}
+		li = next
+	}
+	return li
+}
+
 // boardWantsMore is wantsMore for the board: everything up to boardEagerRows,
 // and past that the next page once the selection nears the end of its lane.
 func (m *Model) boardWantsMore() bool {
 	if len(m.list.issues) < boardEagerRows {
 		return true
 	}
-	ls := lanes(m.list.issues)
+	ls := m.lanes()
 	li, pi := locate(ls, m.list.cursor)
 	return li >= 0 && pi >= len(ls[li].cards)-pageLookahead
 }
@@ -336,7 +401,7 @@ func (m *Model) boardWantsMore() bool {
 // matches are walked in the order the board reads, so n goes down a lane and
 // on to the next one rather than jumping about in the query's order.
 func (m *Model) matchOnBoard(matches []int, direction, count int, inclusive bool) int {
-	order := boardOrder(lanes(m.list.issues))
+	order := boardOrder(m.lanes())
 	at := make([]int, len(m.list.issues))
 	for p, i := range order {
 		at[i] = p
@@ -352,7 +417,7 @@ func (m *Model) matchOnBoard(matches []int, direction, count int, inclusive bool
 // boardPosition is where the selection is for the status line: its lane, and
 // how far down the lane it is.
 func (m *Model) boardPosition() string {
-	ls := lanes(m.list.issues)
+	ls := m.lanes()
 	li, pi := locate(ls, m.list.cursor)
 	if li < 0 {
 		return ""
@@ -366,7 +431,7 @@ func (m *Model) boardPane(width, rows int) []string {
 	if len(m.list.issues) == 0 || rows <= 0 || width <= 0 {
 		return m.emptyPane(width, rows)
 	}
-	ls := lanes(m.list.issues)
+	ls := m.lanes()
 	shown, laneWidth := boardFit(width, len(ls))
 	sel, pos := locate(ls, m.list.cursor)
 	left := follow(m.board.left, sel, shown, len(ls))
@@ -534,7 +599,166 @@ func (m *Model) setView(view string) tea.Cmd {
 		return nil
 	}
 	if !slices.Equal(before, m.searchFields()) {
-		return m.runQuery(m.query)
+		return tea.Batch(m.runQuery(m.query), m.ensureLayout())
 	}
-	return m.maybePage()
+	return tea.Batch(m.maybePage(), m.ensureLayout())
+}
+
+// boardTarget is what a board layout is looked up by: the board configured by
+// id, or else the one project every work item on screen is in. The zero value
+// is nothing to look up, which is what results from several projects are when
+// no board is configured: no one board lays them all out.
+type boardTarget struct {
+	id      int
+	project string
+}
+
+// layoutTarget is the board the rows on screen call for, and false while there
+// are no rows to say.
+func (m *Model) layoutTarget() (boardTarget, bool) {
+	if m.cfg.Board > 0 {
+		return boardTarget{id: m.cfg.Board}, true
+	}
+	if len(m.list.issues) == 0 {
+		return boardTarget{}, false
+	}
+	project := ""
+	for _, issue := range m.list.issues {
+		p := projectOf(issue.Key)
+		if project != "" && p != project {
+			return boardTarget{}, true
+		}
+		project = p
+	}
+	return boardTarget{project: project}, true
+}
+
+// projectOf is the project key a work item key starts with.
+func projectOf(key string) string {
+	if i := strings.LastIndex(key, "-"); i > 0 {
+		return key[:i]
+	}
+	return key
+}
+
+// ensureLayout looks up the board to follow when the rows on screen call for
+// a different one from the board already followed. It reads the cache first,
+// as the field metadata does, since a board's columns change about as often.
+func (m *Model) ensureLayout() tea.Cmd {
+	if m.view != config.ViewBoard {
+		return nil
+	}
+	target, ok := m.layoutTarget()
+	if !ok || target == m.layoutFor {
+		return nil
+	}
+	m.layoutFor, m.layout = target, nil
+	if target == (boardTarget{}) {
+		return nil
+	}
+	st := m.store
+	return func() tea.Msg {
+		board, fresh, _ := st.layout(target)
+		return cachedLayoutMsg{target: target, board: board, fresh: fresh}
+	}
+}
+
+// cachedLayoutMsg carries a cached board layout, board nil on a miss.
+type cachedLayoutMsg struct {
+	target boardTarget
+	board  *jira.Board
+	fresh  bool
+}
+
+func (m *Model) handleCachedLayout(msg cachedLayoutMsg) tea.Cmd {
+	if msg.target != m.layoutFor {
+		return nil
+	}
+	if msg.board == nil {
+		return m.fetchLayout(msg.target)
+	}
+	m.layout = followed(msg.board)
+	if msg.fresh {
+		return nil
+	}
+	return m.fetchLayout(msg.target)
+}
+
+// layoutMsg carries a board layout from Jira. A nil board with no error is
+// the answer that the project is on no board.
+type layoutMsg struct {
+	target boardTarget
+	board  *jira.Board
+	err    error
+}
+
+// fetchLayout asks Jira for the board to follow: the configured one, or the
+// project's. That answer is cached too, so that a project on no board is not
+// asked about again every session.
+func (m *Model) fetchLayout(target boardTarget) tea.Cmd {
+	client, st := m.client, m.store
+	return func() tea.Msg {
+		ctx := context.Background()
+		id := target.id
+		if id == 0 {
+			boards, err := client.Boards(ctx, target.project)
+			if err != nil {
+				return layoutMsg{target: target, err: err}
+			}
+			chosen, ok := chooseBoard(boards)
+			if !ok {
+				st.putLayout(target, &jira.Board{})
+				return layoutMsg{target: target}
+			}
+			id = chosen.ID
+		}
+		board, err := client.Board(ctx, id)
+		if err != nil {
+			return layoutMsg{target: target, err: err}
+		}
+		st.putLayout(target, board)
+		return layoutMsg{target: target, board: board}
+	}
+}
+
+// handleLayout puts the board's columns to work. A failure leaves the lanes
+// as they were -- grouped by status, or by a cached layout -- and says why in
+// the status line, since a board that does not look like Jira's needs a
+// reason.
+func (m *Model) handleLayout(msg layoutMsg) tea.Cmd {
+	if msg.target != m.layoutFor {
+		return nil
+	}
+	if msg.err != nil {
+		m.status = msg.err
+		return nil
+	}
+	m.layout = followed(msg.board)
+	return nil
+}
+
+// followed is the layout a looked-up board gives the board view: nil for the
+// cached answer that there is no board, and for a board with no columns,
+// which would leave every card in a lane of its own status anyway.
+func followed(board *jira.Board) *jira.Board {
+	if board == nil || board.ID == 0 || len(board.Columns) == 0 {
+		return nil
+	}
+	return board
+}
+
+// chooseBoard picks the board a project's work is followed on when it has
+// several: the first that is not a scrum board, since a scrum board's columns
+// describe a sprint rather than the flow, and otherwise the first. Setting
+// board in config picks one outright.
+func chooseBoard(boards []jira.Board) (jira.Board, bool) {
+	for _, b := range boards {
+		if b.Type != "scrum" {
+			return b, true
+		}
+	}
+	if len(boards) == 0 {
+		return jira.Board{}, false
+	}
+	return boards[0], true
 }
