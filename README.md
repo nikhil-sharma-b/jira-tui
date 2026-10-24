@@ -49,6 +49,14 @@ jt               # $JT_ISSUE, else inferred from git branch, else your open work
 
 Press `?` for the keymap.
 
+`gv` switches the work items pane between the list and a board: one lane per
+status, in workflow order (to do, in progress, done), with the query's results
+as cards. `h` / `l` move between lanes and `j` / `k` within one; `Enter` and
+every leader action work on the selected card as they do on a row. `:view board`
+and `:view list` pick a view directly, and `view = "board"` in config starts on
+the board. The board pages through the whole result set on its own, up to 250
+work items, so that a lane holds every item in its status.
+
 In the Links, Subtasks, and Children tabs, use `j` / `k` to select a work item,
 `gg` / `G` to select the first or last, and `Enter` to open it. Counts work as
 they do for attachments. `<leader>y` copies the selected item's key and

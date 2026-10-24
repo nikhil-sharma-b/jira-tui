@@ -60,6 +60,9 @@ func TestLoadMinimalConfigGetsDefaults(t *testing.T) {
 	if got, want := cfg.Reload, "focused"; got != want {
 		t.Errorf("reload = %q, want %q", got, want)
 	}
+	if got, want := cfg.View, "list"; got != want {
+		t.Errorf("view = %q, want %q", got, want)
+	}
 	if len(cfg.Columns) == 0 {
 		t.Error("columns = empty, want the default column set")
 	}
@@ -73,6 +76,7 @@ func TestLoadOverridesDefaults(t *testing.T) {
 leader = ","
 images = "halfblocks"
 reload = "both"
+view = "board"
 columns = ["key", "summary"]
 default_query = "project = PROJ"
 
@@ -98,6 +102,9 @@ help = ""
 	}
 	if got, want := cfg.Images, "halfblocks"; got != want {
 		t.Errorf("images = %q, want %q", got, want)
+	}
+	if got, want := cfg.View, "board"; got != want {
+		t.Errorf("view = %q, want %q", got, want)
 	}
 	if got, want := strings.Join(cfg.Columns, ","), "key,summary"; got != want {
 		t.Errorf("columns = %q, want %q", got, want)
@@ -171,6 +178,11 @@ func TestLoadErrorsNameTheOffendingKey(t *testing.T) {
 			name:     "unknown reload mode",
 			contents: topLevel("reload = \"list\"\n"),
 			wantKey:  "reload",
+		},
+		{
+			name:     "unknown view",
+			contents: topLevel("view = \"kanban\"\n"),
+			wantKey:  "view",
 		},
 	}
 	for _, tt := range tests {

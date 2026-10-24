@@ -122,6 +122,12 @@ type Model struct {
 	detail detailPane
 	focus  Pane
 
+	// view is how the work items pane draws the list: config.ViewList or
+	// config.ViewBoard. board is where the board is scrolled to, kept while
+	// the list is up so that switching back finds it where it was left.
+	view  string
+	board board
+
 	listVisible   bool
 	detailVisible bool
 	zoomed        bool
@@ -313,6 +319,7 @@ func New(opts Options) (*Model, error) {
 		dispatch:      NewDispatcher(bindings),
 		help:          NewHelp(bindings),
 		query:         cfg.DefaultQuery,
+		view:          cfg.View,
 		loading:       true,
 		listVisible:   true,
 		pin:           opts.Pin,
@@ -410,10 +417,21 @@ func (m *Model) fetchPage(pageToken string) tea.Cmd {
 func (m *Model) searchOptions(pageToken string) jira.SearchOptions {
 	return jira.SearchOptions{
 		JQL:        m.query,
-		Fields:     ColumnFields(m.columns),
+		Fields:     m.searchFields(),
 		PageToken:  pageToken,
 		MaxResults: pageSize,
 	}
+}
+
+// searchFields is what a search asks for: the columns' fields, and on the
+// board the status as well, since the lanes are statuses whether or not a
+// column shows one.
+func (m *Model) searchFields() []string {
+	fields := ColumnFields(m.columns)
+	if m.view == config.ViewBoard && !slices.Contains(fields, "status") {
+		fields = append(fields, "status")
+	}
+	return fields
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -694,6 +712,8 @@ func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
 	case config.ActionGoList:
 		m.goList()
 		return nil
+	case config.ActionToggleView:
+		return m.toggleView()
 	case config.ActionGoDetail:
 		m.goDetail()
 		return nil
@@ -741,7 +761,11 @@ func (m *Model) handleAction(action config.Action, count int) tea.Cmd {
 		return nil
 	}
 	before := m.list.cursor
-	m.list.move(action, count)
+	if m.view == config.ViewBoard {
+		m.moveOnBoard(action, count)
+	} else {
+		m.list.move(action, count)
+	}
 	if m.list.cursor == before {
 		return nil
 	}
@@ -890,11 +914,20 @@ func (m *Model) handleCleared(msg clearedMsg) tea.Cmd {
 // end of what is loaded. One request is allowed to be outstanding, which is
 // what keeps a held-down motion from asking for the same page several times.
 func (m *Model) maybePage() tea.Cmd {
-	if m.loading || m.isLast || m.pageFailed || m.columns == nil || !m.list.wantsMore() {
+	if m.loading || m.isLast || m.pageFailed || m.columns == nil || !m.wantsMore() {
 		return nil
 	}
 	m.loading = true
 	return m.fetchPage(m.nextPage)
+}
+
+// wantsMore reports that the next page should be on its way, which the board
+// and the list decide differently.
+func (m *Model) wantsMore() bool {
+	if m.view == config.ViewBoard {
+		return m.boardWantsMore()
+	}
+	return m.list.wantsMore()
 }
 
 func (m *Model) handleFields(msg fieldsMsg) tea.Cmd {
@@ -940,7 +973,7 @@ func (m *Model) handleFields(msg fieldsMsg) tea.Cmd {
 }
 
 func (m *Model) handlePage(msg pageMsg) tea.Cmd {
-	if msg.query != m.query || !slices.Equal(msg.fields, ColumnFields(m.columns)) {
+	if msg.query != m.query || !slices.Equal(msg.fields, m.searchFields()) {
 		// The query or the columns moved on while this was in flight; its rows
 		// belong to a list that is no longer on screen.
 		return nil
@@ -1013,7 +1046,7 @@ func (m *Model) View() string {
 	if detailVisible {
 		lines = boxed(m.detail.view(m.search.shown()), m.width, bodyRows, m.detailTitle(), m.paneHint(config.ActionPaneRight), true)
 	} else {
-		lines = boxed(m.listPane(inner(m.width), inner(bodyRows)), m.width, bodyRows, listTitle,
+		lines = boxed(m.listPane(inner(m.width), inner(bodyRows)), m.width, bodyRows, m.listTitle(),
 			m.paneHint(config.ActionPaneLeft), true)
 	}
 	for len(lines) < bodyRows {
@@ -1030,10 +1063,15 @@ func (m *Model) paneWidths() (int, int) {
 	return left, m.width - left
 }
 
-// listTitle names the list pane, as the reference TUI does. The detail pane is
-// named for the item in it, since that is what a user looking at two panes
-// needs to tell them apart.
-const listTitle = "Work Items"
+// listTitle names the work items pane, as the reference TUI does, after the
+// view it is drawn in. The detail pane is named for the item in it, since that
+// is what a user looking at two panes needs to tell them apart.
+func (m *Model) listTitle() string {
+	if m.view == config.ViewBoard {
+		return "Board"
+	}
+	return "Work Items"
+}
 
 // paneHint is the key that moves focus to a pane, drawn in its frame so the
 // way to reach a pane is on the pane itself. An unbound action has no hint:
@@ -1074,7 +1112,7 @@ func (m *Model) twoPaneView() string {
 	bodyRows := max(m.height-len(footer), 0)
 	leftWidth, rightWidth := m.paneWidths()
 	left := boxed(m.listPane(inner(leftWidth), inner(bodyRows)), leftWidth, bodyRows,
-		listTitle, m.paneHint(config.ActionPaneLeft), m.focus == PaneList)
+		m.listTitle(), m.paneHint(config.ActionPaneLeft), m.focus == PaneList)
 	right := boxed(m.detail.view(m.search.shown()), rightWidth, bodyRows, m.detailTitle(),
 		m.paneHint(config.ActionPaneRight), m.focus == PaneDetail)
 
@@ -1096,26 +1134,45 @@ func (m *Model) twoPaneView() string {
 }
 
 func (m *Model) listPane(width, rows int) []string {
+	if m.view == config.ViewBoard {
+		return m.boardPane(width, rows)
+	}
 	numWidth := numberWidth(len(m.list.issues))
 	widths := layout(m.columns, m.list.issues, m.now(), max(width-gutterWidth-numWidth, 0))
 	lines := make([]string, 0, rows)
 	if len(m.columns) > 0 && rows > 0 {
 		lines = append(lines, fitWidth(header(m.columns, widths, numWidth), width))
 	}
-	switch {
-	case len(m.list.issues) > 0:
+	if len(m.list.issues) > 0 {
 		lines = append(lines, m.rowLines(widths, numWidth, width)...)
-	case m.loading:
-		lines = append(lines, fitWidth("Loading…", width))
-	case m.status != nil:
-		lines = append(lines, fitWidth("The query did not run.", width))
-	default:
-		lines = append(lines, fitWidth("No work items match this query.", width))
+	} else {
+		lines = append(lines, fitWidth(m.emptyMessage(), width))
 	}
 	if len(lines) > rows {
 		lines = lines[:rows]
 	}
 	return lines
+}
+
+// emptyMessage is what the work items pane says when it has no rows, in
+// either view.
+func (m *Model) emptyMessage() string {
+	switch {
+	case m.loading:
+		return "Loading…"
+	case m.status != nil:
+		return "The query did not run."
+	default:
+		return "No work items match this query."
+	}
+}
+
+// emptyPane is the board with nothing to draw on it.
+func (m *Model) emptyPane(width, rows int) []string {
+	if rows <= 0 {
+		return nil
+	}
+	return []string{fitWidth(m.emptyMessage(), width)}
 }
 
 // footer is the bottom of the screen: the line being typed if one is, and
@@ -1182,7 +1239,12 @@ func (m *Model) statusLine() string {
 		return m.withPending(statusStyle.Render(m.fit(m.withOfflineMarker(m.notice))))
 	}
 	var b strings.Builder
-	if n := len(m.list.issues); n > 0 {
+	if m.view == config.ViewBoard {
+		b.WriteString(m.boardPosition())
+		if b.Len() > 0 && !m.isLast {
+			b.WriteString("+")
+		}
+	} else if n := len(m.list.issues); n > 0 {
 		// A trailing + says there is more behind the last loaded row. The
 		// endpoint reports no total, and inventing one by counting loaded rows
 		// would claim a result set is smaller than it is.

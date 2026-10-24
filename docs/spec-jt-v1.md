@@ -524,7 +524,8 @@ rather than introduce a second style.
   Delegated to `acli` via the escape hatch.
 - **Board and sprint views.** Deferred to a later version. Noted deliberately: the
   primary workflow is pinned to a single story in a tmux session, which barely touches
-  a board; browsing happens through JQL.
+  a board; browsing happens through JQL. Since added: `gv` draws the JQL result set as
+  lanes by status. A Jira board's own column mapping and sprints remain out of scope.
 - **Inline image rendering.** Deferred. Images are previewed in a fullscreen overlay
   instead, with the renderer chosen by config.
 - **A headless subcommand set** (`jt issue view --json` and friends) for the AI agent to

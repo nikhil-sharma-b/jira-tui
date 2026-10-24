@@ -78,6 +78,8 @@ var countable = map[config.Action]bool{
 	// not appear here: the middle of the screen admits no count.
 	config.ActionViewportTop: true,
 	config.ActionViewportBot: true,
+	config.ActionLaneLeft:    true,
+	config.ActionLaneRight:   true,
 	config.ActionSearchNext:  true,
 	config.ActionSearchPrev:  true,
 	config.ActionJumpBack:    true,

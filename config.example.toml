@@ -24,6 +24,9 @@ images = "auto"
 # query, the detail pane rereads its work item); "both" reloads the list and
 # the open detail pane together.
 reload = "focused"
+# How the work items pane starts: "list" draws one row per work item, "board"
+# draws them as cards in a lane per status. gv and :view switch while jt runs.
+view = "list"
 
 [site]
 url   = "https://your-site.atlassian.net"

@@ -84,6 +84,11 @@ type Config struct {
 	// "both" reloads the list and, when one is open, the detail pane too.
 	Reload string `toml:"reload"`
 
+	// View is how the work items pane starts out: "list" draws one row per
+	// work item, "board" draws them as cards in a lane per status. gv and
+	// :view switch between the two while jt runs.
+	View string `toml:"view"`
+
 	Timeouts Timeouts `toml:"timeouts"`
 
 	// path and mode record where this config was read from, so that the
@@ -147,6 +152,12 @@ const (
 	ReloadBoth    = "both"
 )
 
+// The values of view.
+const (
+	ViewList  = "list"
+	ViewBoard = "board"
+)
+
 // The values of images.
 const (
 	ImagesAuto       = "auto"
@@ -170,6 +181,7 @@ func Defaults() *Config {
 		Leader:       " ",
 		Images:       ImagesAuto,
 		Reload:       ReloadFocused,
+		View:         ViewList,
 		Timeouts:     Timeouts{Request: Duration(DefaultRequestTimeout)},
 	}
 }
@@ -305,6 +317,11 @@ func (c *Config) validate() error {
 	case ReloadFocused, ReloadBoth:
 	default:
 		return &Error{Key: "reload", Msg: fmt.Sprintf("%q is not one of \"focused\", \"both\"", c.Reload)}
+	}
+	switch c.View {
+	case ViewList, ViewBoard:
+	default:
+		return &Error{Key: "view", Msg: fmt.Sprintf("%q is not one of \"list\", \"board\"", c.View)}
 	}
 	for name := range c.Keys {
 		if !IsAction(name) {

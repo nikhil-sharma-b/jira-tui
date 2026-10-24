@@ -180,7 +180,9 @@ func (m *Model) handleCachedPage(msg cachedPageMsg) tea.Cmd {
 	m.applyPage(msg.result, true)
 	if msg.fresh {
 		m.loading, m.refreshing = false, false
-		return nil
+		// The board loads past the first page without being asked, and a
+		// cached first page is no reason for it to stop there.
+		return m.maybePage()
 	}
 	// Both flags are set here: refreshing is what the status line says, and
 	// loading is what stops a motion from firing a second request underneath
