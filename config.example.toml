@@ -24,6 +24,14 @@ images = "auto"
 # query, the detail pane rereads its work item); "both" reloads the list and
 # the open detail pane together.
 reload = "focused"
+# How the work items pane starts: "list" draws one row per work item, "board"
+# draws them as cards in a lane per status. gv and :view switch while jt runs.
+view = "list"
+# Which Jira board the board view follows: its column order, which statuses
+# each column holds, and its empty columns. 0 finds the board of the project
+# the results are in, when they all are in one; set an id (the number in the
+# board's URL) to choose between several, or for a query across projects.
+# board = 0
 
 [site]
 url   = "https://your-site.atlassian.net"

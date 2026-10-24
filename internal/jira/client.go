@@ -56,6 +56,13 @@ type Client interface {
 	// field IDs. Cacheable for ~24h.
 	Fields(ctx context.Context) ([]Field, error)
 
+	// Boards lists the agile boards that show a project's work items, without
+	// their columns. Cacheable for ~24h.
+	Boards(ctx context.Context, project string) ([]Board, error)
+
+	// Board fetches one agile board's columns. Cacheable for ~24h.
+	Board(ctx context.Context, id int) (*Board, error)
+
 	// Myself identifies the authenticated account, for currentUser() display
 	// and for the default query.
 	Myself(ctx context.Context) (*User, error)

@@ -24,6 +24,7 @@ func siteFields() []jira.Field {
 		{ID: "labels", Name: "Labels"},
 		{ID: "customfield_10016", Name: "Story Points", Custom: true},
 		{ID: "customfield_10020", Name: "Sprint", Custom: true},
+		{ID: rankField, Name: "Rank", Custom: true},
 	}
 }
 

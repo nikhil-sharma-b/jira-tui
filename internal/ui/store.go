@@ -75,6 +75,20 @@ func (s store) putPage(opts jira.SearchOptions, result *jira.SearchResult) {
 	s.put(s.searchKey(opts), result, cache.TTLSearch)
 }
 
+// layout returns a cached board layout. A board with no id is the cached
+// answer that there is no board to follow.
+func (s store) layout(t boardTarget) (board *jira.Board, fresh, ok bool) {
+	return get[*jira.Board](s, s.layoutKey(t))
+}
+
+func (s store) putLayout(t boardTarget, board *jira.Board) {
+	s.put(s.layoutKey(t), board, cache.TTLMetadata)
+}
+
+func (s store) layoutKey(t boardTarget) string {
+	return s.key("board", strconv.Itoa(t.id), t.project)
+}
+
 // clear empties the store, so the next view of anything goes to Jira.
 func (s store) clear() error { return s.cache.Clear(context.Background()) }
 
@@ -158,7 +172,7 @@ func (m *Model) handleCachedFields(msg cachedFieldsMsg) tea.Cmd {
 		// and ask.
 		return m.fetchFields()
 	}
-	m.columns = columns
+	m.columns, m.rankField = columns, RankField(msg.fields)
 	if msg.fresh {
 		return m.loadPage()
 	}
@@ -180,11 +194,13 @@ func (m *Model) handleCachedPage(msg cachedPageMsg) tea.Cmd {
 	m.applyPage(msg.result, true)
 	if msg.fresh {
 		m.loading, m.refreshing = false, false
-		return nil
+		// The board loads past the first page without being asked, and a
+		// cached first page is no reason for it to stop there.
+		return tea.Batch(m.maybePage(), m.ensureLayout())
 	}
 	// Both flags are set here: refreshing is what the status line says, and
 	// loading is what stops a motion from firing a second request underneath
 	// this one.
 	m.loading, m.refreshing = true, true
-	return m.fetchPage("")
+	return tea.Batch(m.fetchPage(""), m.ensureLayout())
 }

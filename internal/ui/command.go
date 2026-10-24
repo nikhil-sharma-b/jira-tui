@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/nikhil-sharma-b/jira-tui/internal/config"
 )
 
 // The commandline is where capability goes. Single letters navigate and the
@@ -43,6 +44,7 @@ var commands = []command{
 	{name: "jql", run: runJQL, completeArg: completeSavedQueries},
 	{name: "transition", run: runTransition, completeArg: completeTransitions, liveArgs: liveTransitions},
 	{name: "assign", run: runAssign},
+	{name: "view", run: runView, completeArg: completeViews},
 	{name: "!", run: runShell},
 	{name: "acli", run: runAcli},
 	{name: "cache", run: runCache, completeArg: func(_ *Model, partial string) []string {
@@ -168,6 +170,33 @@ func liveTransitions(m *Model) tea.Cmd {
 		return nil
 	}
 	return m.fetchTransitions(key, intentComplete, "")
+}
+
+// views are the ways the work items pane can be drawn, as :view names them.
+var views = []string{config.ViewBoard, config.ViewList}
+
+// runView is :view list and :view board, and a bare :view switches to the
+// other one, as gv does.
+func runView(m *Model, arg string) tea.Cmd {
+	if arg == "" {
+		return m.toggleView()
+	}
+	if !slices.Contains(views, arg) {
+		m.status = fmt.Errorf("view: no view named %q; the views are list and board", arg)
+		return nil
+	}
+	m.goList()
+	return m.setView(arg)
+}
+
+func completeViews(_ *Model, partial string) []string {
+	var out []string
+	for _, v := range views {
+		if strings.HasPrefix(v, partial) {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // runCache is :cache clear and nothing else, so that a mistyped subcommand is

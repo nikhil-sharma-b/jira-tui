@@ -91,6 +91,15 @@ type fakeClient struct {
 	MyselfCalls int
 	AssignCalls []struct{ Key, AccountID string }
 	assignErr   error
+
+	// boards are the boards each project is on, and boardFor each board's
+	// columns. A project with no entry is on no board, which is what every
+	// test that does not mention boards gets.
+	boards      map[string][]jira.Board
+	boardFor    map[int]jira.Board
+	boardsErr   error
+	BoardsCalls []string
+	BoardCalls  []int
 }
 
 func (c *fakeClient) Fields(ctx context.Context) ([]jira.Field, error) {
@@ -406,6 +415,33 @@ func (c *fakeClient) Myself(context.Context) (*jira.User, error) {
 		return &found, nil
 	}
 	return &jira.User{AccountID: "acct-1", DisplayName: "Test User"}, nil
+}
+
+func (c *fakeClient) Boards(_ context.Context, project string) ([]jira.Board, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.BoardsCalls = append(c.BoardsCalls, project)
+	if c.boardsErr != nil {
+		return nil, c.boardsErr
+	}
+	return append([]jira.Board(nil), c.boards[project]...), nil
+}
+
+func (c *fakeClient) Board(_ context.Context, id int) (*jira.Board, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.BoardCalls = append(c.BoardCalls, id)
+	board, ok := c.boardFor[id]
+	if !ok {
+		return nil, fmt.Errorf("unknown fake board %d", id)
+	}
+	return &board, nil
+}
+
+func (c *fakeClient) boardRequests() ([]string, []int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.BoardsCalls...), append([]int(nil), c.BoardCalls...)
 }
 
 func (c *fakeClient) myselfCalls() int {

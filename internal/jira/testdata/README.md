@@ -73,3 +73,9 @@ documented v3 issue shape rather than captured, because a genuine one would
 mean recording a real project's dependency graph. It covers both ends of a
 link -- an `outwardIssue` and an `inwardIssue` of the same link type, which is
 what decides whether the relationship reads as "blocks" or "is blocked by".
+
+`boards.200` and `boardconfig.200` are written to Atlassian's documented
+Jira Software (`/rest/agile/1.0`) board listing and board configuration
+responses rather than captured, since a real board's columns encode one team's
+workflow. They cover a project shown on two boards of different types, and a
+board whose columns hold several statuses, one status, and none.

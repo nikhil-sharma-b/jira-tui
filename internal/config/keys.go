@@ -20,6 +20,16 @@ const (
 	ActionViewportMid  Action = "viewport_middle"
 	ActionViewportBot  Action = "viewport_bottom"
 
+	// Lane motions move between the board's lanes. They are motions like j
+	// and k, only sideways, so they take bare letters too; in the list there
+	// is nowhere sideways to go and they do nothing.
+	ActionLaneLeft  Action = "lane_left"
+	ActionLaneRight Action = "lane_right"
+
+	// ActionToggleView swaps the work items pane between the list and the
+	// board. It only changes how the same result set is drawn.
+	ActionToggleView Action = "toggle_view"
+
 	ActionOpen     Action = "open"
 	ActionJumpBack Action = "jump_back"
 	ActionJumpFwd  Action = "jump_forward"
@@ -97,6 +107,8 @@ func DefaultKeymap() Keymap {
 		ActionViewportTop:  "H",
 		ActionViewportMid:  "M",
 		ActionViewportBot:  "L",
+		ActionLaneLeft:     "h",
+		ActionLaneRight:    "l",
 
 		ActionOpen:     "enter",
 		ActionJumpBack: "ctrl+o",
@@ -110,6 +122,8 @@ func DefaultKeymap() Keymap {
 		ActionGoDetail: "gd",
 		ActionPrevTab:  "[",
 		ActionNextTab:  "]",
+
+		ActionToggleView: "gv",
 
 		ActionGoAttachments: "ga",
 		ActionPreview:       "p",

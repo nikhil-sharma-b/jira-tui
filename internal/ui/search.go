@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/nikhil-sharma-b/jira-tui/internal/config"
 	"github.com/nikhil-sharma-b/jira-tui/internal/jira"
 )
 
@@ -109,6 +110,10 @@ func (m *Model) moveToMatch(direction, count int, inclusive bool) tea.Cmd {
 		return nil
 	}
 	m.status = nil
+	if m.view == config.ViewBoard {
+		m.list.selectRow(m.matchOnBoard(matches, direction, count, inclusive))
+		return nil
+	}
 	m.list.selectRow(matchAt(matches, m.list.cursor, direction, count, inclusive))
 	return nil
 }

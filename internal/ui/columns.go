@@ -215,6 +215,23 @@ func applyShape(col *Column, id string) {
 	}
 }
 
+// RankField finds the site's Rank field, the custom field Jira's boards order
+// their cards by. It is found by name, as a site's own boards name it; none,
+// or more than one, finds nothing, and the cards keep the query's order.
+func RankField(fields []jira.Field) string {
+	id := ""
+	for _, f := range fields {
+		if !f.Custom || !strings.EqualFold(f.Name, "Rank") {
+			continue
+		}
+		if id != "" {
+			return ""
+		}
+		id = f.ID
+	}
+	return id
+}
+
 func renderKey(i *jira.Issue, _ time.Time) string { return i.Key }
 
 func userName(u *jira.User, absent string) string {
