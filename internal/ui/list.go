@@ -35,6 +35,10 @@ const pageLookahead = 10
 // actions, and a component with its own keymap would be a second place for a
 // key to be bound.
 type list struct {
+	// all is every row loaded so far. issues is the rows on screen: all of
+	// them, or the ones a :filter keeps. Everything that draws or moves
+	// addresses issues; only loading a page writes all.
+	all    []*jira.Issue
 	issues []*jira.Issue
 	cursor int
 	// top is the index of the first drawn row. Selection and viewport are
@@ -54,7 +58,7 @@ func (l *list) refresh(issue *jira.Issue) {
 	if issue == nil {
 		return
 	}
-	for _, row := range l.issues {
+	for _, row := range l.all {
 		if row.Key != issue.Key {
 			continue
 		}

@@ -192,11 +192,18 @@ func (m *Model) matchingRows() []int {
 	now := m.now()
 	var out []int
 	for i, issue := range m.list.issues {
-		if strings.Contains(strings.ToLower(m.rowText(issue, now)), needle) {
+		if m.rowContains(issue, needle, now) {
 			out = append(out, i)
 		}
 	}
 	return out
+}
+
+// rowContains reports whether a row's text contains needle, which the caller
+// has already lowercased. / and :filter both ask it, so the two can never
+// disagree about what matches.
+func (m *Model) rowContains(issue *jira.Issue, needle string, now time.Time) bool {
+	return strings.Contains(strings.ToLower(m.rowText(issue, now)), needle)
 }
 
 // rowText is everything one row says, untruncated and unpadded.
