@@ -157,6 +157,8 @@ type Model struct {
 	// search is the in-pane search: what is being looked for in the rows that
 	// are loaded.
 	search paneSearch
+	// filter is the :filter pattern, empty when every loaded row is shown.
+	filter string
 
 	// picker is the choice on screen while one is being made, nil otherwise.
 	// Like prompt it is paired with the dispatcher's modal state, and
@@ -889,6 +891,11 @@ func newJiraSearchPrompt() *prompt {
 // bypasses it, because R is what the user presses when they do not believe
 // what is on screen.
 func (m *Model) runQuery(query string) tea.Cmd {
+	if query != m.query && m.filter != "" {
+		// A new query is a new list. A filter kept from the last one would
+		// hide rows for a reason the user has stopped thinking about.
+		m.setFilter("")
+	}
 	m.query = query
 	m.beginQuery()
 	if m.columns == nil {
@@ -948,6 +955,12 @@ func (m *Model) maybePage() tea.Cmd {
 // wantsMore reports that the next page should be on its way, which the board
 // and the list decide differently.
 func (m *Model) wantsMore() bool {
+	if m.filter != "" {
+		// A filtered list is short by design, so the selection is always near
+		// its end. That is no sign of wanting more, and reading it as one
+		// would page through an unbounded result set.
+		return len(m.list.all) < filterEagerRows
+	}
 	if m.view == config.ViewBoard {
 		return m.boardWantsMore()
 	}
@@ -1033,11 +1046,12 @@ func (m *Model) applyPage(result *jira.SearchResult, first bool) {
 	var where anchor
 	if first {
 		where = m.list.anchor()
-		m.list.issues = nil
+		m.list.all = nil
 	}
 	for i := range result.Issues {
-		m.list.issues = append(m.list.issues, &result.Issues[i])
+		m.list.all = append(m.list.all, &result.Issues[i])
 	}
+	m.refilter()
 	m.list.rows = m.rows()
 	if first {
 		m.list.restore(where)
@@ -1189,6 +1203,8 @@ func (m *Model) emptyMessage() string {
 		return "Loading…"
 	case m.status != nil:
 		return "The query did not run."
+	case m.filter != "" && len(m.list.all) > 0:
+		return fmt.Sprintf("No loaded work items match the filter %q.", m.filter)
 	default:
 		return "No work items match this query."
 	}
@@ -1279,6 +1295,14 @@ func (m *Model) statusLine() string {
 		if !m.isLast {
 			b.WriteString("+")
 		}
+	}
+	if m.filter != "" {
+		// Said beside the count it explains: 2/3 of a fifty-row query reads
+		// as a bug until the filter that hid the rest is on the same line.
+		if b.Len() > 0 {
+			b.WriteString(" ")
+		}
+		fmt.Fprintf(&b, "filter %q", m.filter)
 	}
 	if m.loading {
 		if b.Len() > 0 {

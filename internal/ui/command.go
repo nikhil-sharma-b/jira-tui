@@ -45,6 +45,7 @@ var commands = []command{
 	{name: "transition", run: runTransition, completeArg: completeTransitions, liveArgs: liveTransitions},
 	{name: "assign", run: runAssign},
 	{name: "view", run: runView, completeArg: completeViews},
+	{name: "filter", run: runFilter},
 	{name: "!", run: runShell},
 	{name: "acli", run: runAcli},
 	{name: "cache", run: runCache, completeArg: func(_ *Model, partial string) []string {

@@ -329,6 +329,7 @@ ACTIONS (focused work item)
 COMMANDLINE
   :jql <query>       :jql @saved
   :transition <name> :assign <user>
+  :filter <text>     hide rows without <text>; bare :filter shows all
   :cache clear       :!<cmd>       (% expands to current work item key)
 ```
 

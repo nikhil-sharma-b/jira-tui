@@ -64,6 +64,12 @@ action work on the selected card as they do on a row. `:view board` and
 board. The board pages through the whole result set on its own, up to 250 work
 items, so that a lane holds every item in its status.
 
+`:filter <text>` narrows the work items pane, list or board, to the rows
+containing that text, ignoring case. It matches what `/` would find, but hides
+the rest rather than jumping between matches. A bare `:filter` shows every row
+again. The filter loads the rest of the result set, up to 250 work items, so
+it is not limited to the first page. `R` keeps it; a new query clears it.
+
 In the Links, Subtasks, and Children tabs, use `j` / `k` to select a work item,
 `gg` / `G` to select the first or last, and `Enter` to open it. Counts work as
 they do for attachments. `<leader>y` copies the selected item's key and

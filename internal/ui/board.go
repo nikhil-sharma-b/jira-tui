@@ -389,7 +389,7 @@ func nextLane(ls []lane, li, step, n int) int {
 // boardWantsMore is wantsMore for the board: everything up to boardEagerRows,
 // and past that the next page once the selection nears the end of its lane.
 func (m *Model) boardWantsMore() bool {
-	if len(m.list.issues) < boardEagerRows {
+	if len(m.list.all) < boardEagerRows {
 		return true
 	}
 	ls := m.lanes()
@@ -619,11 +619,13 @@ func (m *Model) layoutTarget() (boardTarget, bool) {
 	if m.cfg.Board > 0 {
 		return boardTarget{id: m.cfg.Board}, true
 	}
-	if len(m.list.issues) == 0 {
+	// Every loaded row, not only the ones a filter shows: which board lays
+	// the query out does not change with what is hidden from it.
+	if len(m.list.all) == 0 {
 		return boardTarget{}, false
 	}
 	project := ""
-	for _, issue := range m.list.issues {
+	for _, issue := range m.list.all {
 		p := projectOf(issue.Key)
 		if project != "" && p != project {
 			return boardTarget{}, true
